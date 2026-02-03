@@ -1,0 +1,300 @@
+# OmniRetargeting
+
+**Generic motion retargeting for any humanoid URDF and terrain mesh.**
+
+OmniRetargeting is a flexible motion retargeting system that can convert human motion trajectories (in SMPLX format) to any humanoid robot operating on any terrain mesh. Unlike specialized retargeting systems, OmniRetargeting automatically adapts to different robot morphologies and terrain types.
+
+## Installation
+
+```bash
+pip install omniretargeting
+```
+
+Or install from source:
+
+```bash
+git clone <repository-url>
+cd omniretargeting
+pip install -e .
+```
+
+For development with testing:
+
+```bash
+pip install -e ".[dev,test]"
+```
+
+## Quick Start
+
+```python
+from omniretargeting import OmniRetargeter
+from omniretargeting.utils import load_smplx_trajectory
+from pathlib import Path
+
+# Define your inputs
+robot_urdf = "path/to/your/robot.urdf"
+terrain_mesh = "path/to/your/terrain.obj"
+
+# Load SMPLX trajectory (positions and orientations)
+# For raw SMPLX-NG files (e.g., stageii.npz with poses/trans/betas)
+smplx_trajectory, smplx_orientations = load_smplx_trajectory(
+    Path("path/to/trajectory_stageii.npz"),
+    smplx_model_directory="path/to/smplx/models",  # Required for raw files and orientation computation
+    gender="neutral",
+)
+
+# OR for pre-processed files (.npy or .npz with global_joint_positions)
+# smplx_trajectory, smplx_orientations = load_smplx_trajectory(
+#     Path("path/to/trajectory.npy")
+# )
+
+print(f"Loaded trajectory shape: {smplx_trajectory.shape}")  # (T, J, 3)
+if smplx_orientations is not None:
+    print(f"Loaded orientations shape: {smplx_orientations.shape}")  # (T, J, 4) - quaternions (wxyz)
+else:
+    print("Orientations not available for this file format")
+
+# Define joint mapping from SMPLX to robot
+joint_mapping = {
+    "root": "pelvis",
+    "left_hip": "left_hip_pitch",
+    "right_hip": "right_hip_pitch",
+    "left_knee": "left_knee_pitch",
+    "right_knee": "right_knee_pitch",
+    # ... add more mappings as needed
+}
+
+# Create retargeter
+retargeter = OmniRetargeter(
+    robot_urdf_path=robot_urdf,
+    terrain_mesh_path=terrain_mesh,
+    joint_mapping=joint_mapping
+)
+
+# Perform retargeting
+terrain_scale, retargeted_motion = retargeter.retarget_motion(smplx_trajectory)
+
+print(f"Terrain scale factor: {terrain_scale}")
+print(f"Retargeted motion shape: {retargeted_motion.shape}")  # (T, 7 + DOF)
+```
+
+## Input Format
+
+### SMPLX Trajectory
+
+The trajectory must be provided as a numpy array of shape `(T, J, 3)` where:
+- **T**: Number of frames
+- **J**: Number of joints (typically 22 for body joints)
+- **3**: (x, y, z) coordinates in world frame
+
+#### Loading Trajectory Files
+
+OmniRetargeting supports multiple trajectory file formats through the `load_smplx_trajectory` utility:
+
+**1. Pre-processed files (.npy)**:
+```python
+from omniretargeting.utils import load_smplx_trajectory
+# Returns (positions, None) since orientations cannot be computed from positions alone
+trajectory, orientations = load_smplx_trajectory(Path("trajectory.npy"))
+# orientations will be None
+```
+
+**2. Pre-processed files (.npz with 'global_joint_positions')**:
+```python
+# Returns (positions, orientations) if full_pose data is available
+trajectory, orientations = load_smplx_trajectory(
+    Path("trajectory.npz"),
+    smplx_model_directory="/path/to/smplx/models",  # Needed for parent structure
+)
+# Looks for 'global_joint_positions' key for positions
+# Looks for 'full_pose' and 'root_orient' keys for orientations
+```
+
+**3. Raw SMPLX-NG files (stageii.npz)**:
+
+Raw SMPLX-NG files contain SMPLX parameters, not joint positions. Keys include:
+- `'gender'`, `'surface_model_type'`, `'mocap_frame_rate'`
+- `'trans'`, `'poses'`, `'betas'`
+- `'root_orient'`, `'pose_body'`, `'pose_hand'`, `'pose_jaw'`, `'pose_eye'`
+
+To load these, you **must** provide the SMPLX model path:
+
+```python
+trajectory, orientations = load_smplx_trajectory(
+    Path("HumanEva_S3_Jog_1_stageii.npz"),
+    smplx_model_directory="/path/to/smplx/models",  # Required!
+    gender="neutral",  # Auto-detected from file if present
+)
+```
+
+The function **always returns a tuple** `(positions, orientations)`:
+1. Load SMPLX parameters from the file
+2. Run forward kinematics using the SMPLX model
+3. Return joint positions in shape `(T, 22, 3)` and orientations in shape `(T, 22, 4)`
+
+**Orientation Format:**
+- Orientations are returned as quaternions in **wxyz** format (scalar-first)
+- Shape: `(T, J, 4)` where the last dimension is `[w, x, y, z]`
+- Represents the world-frame orientation of each joint
+- Will be `None` if orientations cannot be computed (e.g., .npy files with positions only)
+
+### Joint Mapping
+A dictionary mapping SMPLX joint names to robot link names:
+
+```python
+joint_mapping = {
+    "root": "pelvis",           # Root joint
+    "left_hip": "left_hip_pitch",
+    "right_hip": "right_hip_pitch",
+    "left_knee": "left_knee_pitch",
+    "right_knee": "right_knee_pitch",
+    "left_ankle": "left_ankle_pitch",
+    "right_ankle": "right_ankle_pitch",
+    # Add more joints as available
+}
+```
+
+### Terrain Mesh
+Supports common mesh formats:
+- `.obj` (Wavefront OBJ)
+- `.stl` (STL mesh)
+- `.ply` (Polygon File Format)
+- `.gltf`/`.glb` (glTF)
+
+### Robot URDF
+Standard URDF format for humanoid robots. The system automatically:
+- Detects robot height and dimensions
+- Identifies joint limits and types
+- Sets up collision detection
+
+## Output Format
+
+The `retarget_motion()` method returns a tuple:
+
+```python
+terrain_scale, retargeted_motion = retargeter.retarget_motion(smplx_trajectory)
+```
+
+- **`terrain_scale`**: Float scaling factor applied to the terrain mesh
+- **`retargeted_motion`**: Numpy array of shape `(T, 7 + DOF)` containing:
+  - `[0:3]`: Root position (x, y, z)
+  - `[3:7]`: Root quaternion (w, x, y, z)
+  - `[7:]`: Joint angles in radians
+
+## Advanced Usage
+
+### Custom Robot Height
+
+```python
+retargeter = OmniRetargeter(
+    robot_urdf_path=robot_urdf,
+    terrain_mesh_path=terrain_mesh,
+    joint_mapping=joint_mapping,
+    robot_height=1.8  # Override auto-detected height
+)
+```
+
+### Validation
+
+```python
+# Check if joint mapping is valid
+missing_joints = retargeter.validate_joint_mapping()
+if missing_joints:
+    print(f"Warning: Missing joints: {missing_joints}")
+
+# Get robot information
+print(f"Robot DOF: {retargeter.get_robot_dof()}")
+print(f"Joint names: {retargeter.get_joint_names()}")
+```
+
+## Examples
+
+See the `examples/` directory for complete usage examples:
+
+- `basic_usage.py`: Simple API demonstration and trajectory visualization
+- `advanced_usage.py`: Advanced features, validation, and motion comparisons
+
+Run examples with:
+
+```bash
+python examples/basic_usage.py
+python examples/advanced_usage.py
+```
+
+## Running Tests
+
+```bash
+pytest tests/
+```
+
+## API Reference
+
+### `OmniRetargeter`
+
+Main class for motion retargeting.
+
+#### Constructor
+```python
+OmniRetargeter(robot_urdf_path, terrain_mesh_path, joint_mapping, robot_height=None)
+```
+
+#### Methods
+
+- `retarget_motion(smplx_trajectory, terrain_coordinates=None)` → `(terrain_scale, retargeted_motion)`
+- `get_robot_dof()` → `int`
+- `get_joint_names()` → `List[str]`
+- `validate_joint_mapping()` → `List[str]`
+
+## Dependencies
+
+- numpy
+- torch
+- scipy
+- matplotlib
+- trimesh
+- smplx
+- mujoco
+- viser
+- yourdfpy
+- cvxpy
+- libigl
+- open3d
+- pyvista
+
+## Architecture
+
+OmniRetargeting adapts the interaction mesh retargeting approach from the holosoma_retargeting project to work with generic robots and terrains:
+
+1. **Terrain Scaling**: Automatically scales terrain mesh to match SMPLX motion scale
+2. **Generic Robot Support**: Works with any URDF through automatic model loading and analysis
+3. **Interaction Mesh**: Creates tetrahedral mesh from human joints and terrain points
+4. **Optimization**: Uses SQP optimization with Laplacian deformation constraints
+5. **Collision Avoidance**: Implements terrain penetration constraints
+6. **Joint Limits**: Respects robot joint limits during optimization
+
+## Contributing
+
+We welcome contributions! Please:
+
+1. Fork the repository
+2. Create a feature branch
+3. Add tests for new functionality
+4. Ensure all tests pass
+5. Submit a pull request
+
+## License
+
+This project is licensed under the Apache 2.0 License.
+
+## Citation
+
+If you use OmniRetargeting in your research, please cite:
+
+```
+@software{omniretargeting2024,
+  title={OmniRetargeting: Generic Motion Retargeting for Humanoid Robots},
+  author={OmniRetargeting Team},
+  year={2024},
+  url={https://github.com/your-org/omniretargeting}
+}
+```

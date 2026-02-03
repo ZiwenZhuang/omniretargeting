@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "omniretargeting"
+version = "0.1.0"
+description = "Generic motion retargeting for any humanoid URDF and terrain mesh."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "OmniRetargeting Team" },
+]
+dependencies = [
+    # Core dependencies from holosoma_retargeting
+    "numpy==2.3.5",
+    "torch",
+    "tqdm",
+    "scipy",
+    "matplotlib",
+    "trimesh",
+    "smplx",
+    "jinja2",
+    "mujoco",
+    "viser",
+    "robot_descriptions",
+    "yourdfpy",
+    "cvxpy",
+    "libigl",
+    "tyro",
+    # Additional dependencies for generic mesh processing
+    "open3d",
+    "pyvista",
+]
+
+[project.optional-dependencies]
+dev = ["mypy", "ruff", "pytest", "black"]
+test = ["pytest", "pytest-cov"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["omniretargeting*"]
