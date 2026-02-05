@@ -221,6 +221,29 @@ python examples/basic_usage.py
 python examples/advanced_usage.py
 ```
 
+## HER Workflow (WIP)
+
+This repo now includes a HER-specific workflow module under:
+
+`omniretargeting/workflows/her/`
+
+Main entry points:
+
+```bash
+# 1) End-to-end pipeline (ground alignment + prepare + retarget)
+python -m omniretargeting.workflows.her.pipeline --seq smooth --robot g1
+
+# 2) Scene reconstruction package (for climbing_scene)
+python -m omniretargeting.workflows.her.scene.ply2scene.convert --seq smooth --robot g1
+
+# 3) Reconstruction+retarget viewer
+python -m omniretargeting.workflows.her.viz.viser_player_recon --seq smooth --robot g1 --robot-urdf /path/to/robot.urdf
+```
+
+Notes:
+- Joint standard in this workflow is the omniretargeting 22-joint order (`Pelvis/L_Hip/.../R_Wrist`).
+- Contact labels from HER outputs are used for per-frame height correction (global `z_min` shift stays disabled).
+
 ## Running Tests
 
 ```bash

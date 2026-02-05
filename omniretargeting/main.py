@@ -22,8 +22,13 @@ def visualize_trajectory(urdf_path, trajectory, smplx_trajectory=None):
     print("Launching viewer...")
     print("Controls: Space to pause/resume, [ and ] to step frames.")
     
-    # Load model
-    model = mujoco.MjModel.from_xml_path(str(urdf_path))
+    # Load model (prefer adjacent MJCF .xml when given a URDF).
+    model_path = Path(urdf_path)
+    if model_path.suffix.lower() == ".urdf":
+        adjacent_xml = model_path.with_suffix(".xml")
+        if adjacent_xml.exists():
+            model_path = adjacent_xml
+    model = mujoco.MjModel.from_xml_path(str(model_path))
     data = mujoco.MjData(model)
     
     # Brighten the scene by increasing ambient light
@@ -232,4 +237,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

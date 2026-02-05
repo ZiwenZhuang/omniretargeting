@@ -47,6 +47,12 @@ class GenericInteractionRetargeter:
         foot_sticking_tolerance: float = 1e-3,
         collision_detection_threshold: float = 0.1,
         valid_joint_names: Optional[List[str]] = None,
+        debug_frames: int = 5,
+        print_joint_order: bool = True,
+        enable_penetration_constraints: bool = True,
+        max_penetration_constraints: int = 64,
+        penetration_constraint_mode: str = "soft",
+        penetration_slack_weight: float = 1e4,
     ):
         """Initialize the generic retargeter.
         
@@ -93,6 +99,17 @@ class GenericInteractionRetargeter:
         self.penetration_tolerance = penetration_tolerance
         self.foot_sticking_tolerance = foot_sticking_tolerance
         self.collision_detection_threshold = collision_detection_threshold
+        self.debug_frames = max(0, int(debug_frames))
+        self.print_joint_order = bool(print_joint_order)
+        self.enable_penetration_constraints = bool(enable_penetration_constraints)
+        self.max_penetration_constraints = max(0, int(max_penetration_constraints))
+        self.penetration_constraint_mode = str(penetration_constraint_mode).lower().strip()
+        if self.penetration_constraint_mode not in ("hard", "soft"):
+            raise ValueError("penetration_constraint_mode must be 'hard' or 'soft'")
+        self.penetration_slack_weight = float(penetration_slack_weight)
+        self._frame_count = 0
+        self._debug_this_frame = False
+        self._joint_order_printed = False
 
         # Setup robot configuration
         self._setup_robot_config()
@@ -309,18 +326,12 @@ class GenericInteractionRetargeter:
         """
         q = q_init.copy()
         last_cost = np.inf
-        
-        import sys
-        # Enable debug for first few frames to see the pattern
-        debug = not hasattr(sys, '_omni_frame_count')
-        if not hasattr(sys, '_omni_frame_count'):
-            sys._omni_frame_count = 0
-        
-        frame_num = sys._omni_frame_count
-        sys._omni_frame_count += 1
-        
-        # Debug first 5 frames to see the pattern
-        show_debug = frame_num < 5
+
+        frame_num = self._frame_count
+        self._frame_count += 1
+
+        show_debug = self.debug_frames > 0 and frame_num < self.debug_frames
+        self._debug_this_frame = show_debug
 
         if show_debug:
             print(f"\n=== Frame {frame_num} Optimization ===")
@@ -340,11 +351,21 @@ class GenericInteractionRetargeter:
             if show_debug and iteration < 3:
                 print(f"  Iter {iteration}: cost={cost:.4f}, |dq|={np.linalg.norm(q_new - q):.6f}, status={'OK' if cost < np.inf else 'FAIL'}")
 
-            # Check convergence
+            # Check convergence (but don't stop early if we're still violating non-penetration).
             if abs(cost - last_cost) < 1e-6:
-                if show_debug:
-                    print(f"  Converged at iteration {iteration}")
-                break
+                has_violation = False
+                if self.enable_penetration_constraints and np.isfinite(cost):
+                    saved_debug = self._debug_this_frame
+                    self._debug_this_frame = False
+                    try:
+                        ineqs_new = self._compute_penetration_inequalities(q_new)
+                    finally:
+                        self._debug_this_frame = saved_debug
+                    has_violation = any((rhs > 0.0) for _J, rhs in ineqs_new)
+                if not has_violation:
+                    if show_debug:
+                        print(f"  Converged at iteration {iteration}")
+                    break
 
             q = q_new
             last_cost = cost
@@ -354,7 +375,69 @@ class GenericInteractionRetargeter:
             print(f"Final q[:10]: {q[:10]}")
             print(f"Total change: {np.linalg.norm(q - q_init):.6f}")
 
+        # Final feasibility cleanup for collision constraints.
+        if self.enable_penetration_constraints and np.isfinite(last_cost):
+            q = self._project_penetration_feasible(q, max_steps=3)
+
         return q
+
+    def _project_penetration_feasible(self, q: np.ndarray, *, max_steps: int = 3) -> np.ndarray:
+        """
+        Post-SQP feasibility projection for non-penetration constraints.
+
+        Even with hard constraints, SQP-style linearization + quaternion normalization can leave
+        small residual violations. This projection solves a small conic program that minimally
+        changes q (within the trust region and joint limits) while satisfying the current
+        linearized non-penetration inequalities.
+        """
+        if not self.enable_penetration_constraints:
+            return q
+
+        q_proj = q.copy()
+
+        for _ in range(int(max_steps)):
+            # Compute inequalities at the current configuration.
+            saved_debug = self._debug_this_frame
+            self._debug_this_frame = False
+            try:
+                ineqs = self._compute_penetration_inequalities(q_proj)
+            finally:
+                self._debug_this_frame = saved_debug
+
+            if not ineqs:
+                break
+
+            rhs_vals = np.array([rhs for _J, rhs in ineqs], dtype=float)
+            if float(rhs_vals.max(initial=0.0)) <= 0.0:
+                break
+
+            dqa = cp.Variable(len(self.q_a_indices), name="dqa_proj")
+            constraints: list[Any] = []
+
+            q_a_current = q_proj[self.q_a_indices]
+            constraints.extend(
+                [
+                    dqa >= (self.q_a_lb - q_a_current),
+                    dqa <= (self.q_a_ub - q_a_current),
+                ]
+            )
+            constraints.extend([J @ dqa >= float(rhs) for (J, rhs) in ineqs])
+            constraints.append(cp.SOC(self.step_size, dqa))
+
+            obj = cp.sum_squares(dqa)
+            problem = cp.Problem(cp.Minimize(obj), constraints)
+            problem.solve(solver=cp.CLARABEL, verbose=False)
+
+            if problem.status not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE) or dqa.value is None:
+                break
+
+            q_new = q_proj.copy()
+            q_new[self.q_a_indices] = q_a_current + dqa.value
+            quat_new = q_new[3:7]
+            q_new[3:7] = quat_new / (np.linalg.norm(quat_new) + 1e-12)
+            q_proj = q_new
+
+        return q_proj
 
     def _single_optimization_step(
         self,
@@ -418,13 +501,12 @@ class GenericInteractionRetargeter:
         robot_points = np.array(robot_points)
         
         # Debug: Print order for first frame to verify
-        import sys
-        if not hasattr(sys, '_omni_joint_order_printed'):
+        if self.print_joint_order and not self._joint_order_printed:
             print(f"\n=== Joint Order Verification ===")
             print(f"Joint mapping order: {joint_names_ordered}")
             print(f"p_V keys order: {list(p_V.keys())}")
             print(f"First 3 robot points correspond to: {joint_names_ordered[:3]}")
-            sys._omni_joint_order_printed = True
+            self._joint_order_printed = True
         
         # CRITICAL: Validate that sizes match exactly
         expected_num_joints = len(joint_names_ordered)
@@ -517,11 +599,18 @@ class GenericInteractionRetargeter:
             dqa <= (self.q_a_ub - q_a_current),
         ])
 
-        # Terrain penetration constraints
-        # DISABLED: Penetration constraints are not working correctly yet
-        # TODO: Re-enable after fixing collision detection
-        # penetration_constraints = self._compute_penetration_constraints(q, dqa)
-        # constraints.extend(penetration_constraints)
+        # Terrain penetration constraints (MuJoCo distance + contact Jacobian linearization).
+        penetration_slack = None
+        penetration_ineqs: list[tuple[np.ndarray, float]] = []
+        if self.enable_penetration_constraints:
+            penetration_ineqs = self._compute_penetration_inequalities(q)
+            if penetration_ineqs:
+                if self.penetration_constraint_mode == "hard":
+                    constraints.extend([J @ dqa >= rhs for (J, rhs) in penetration_ineqs])
+                else:
+                    penetration_slack = cp.Variable(len(penetration_ineqs), nonneg=True, name="penetration_slack")
+                    for i, (J, rhs) in enumerate(penetration_ineqs):
+                        constraints.append(J @ dqa + penetration_slack[i] >= rhs)
 
         # Trust region
         constraints.append(cp.SOC(self.step_size, dqa))
@@ -558,6 +647,10 @@ class GenericInteractionRetargeter:
         # This matches original: cp.sum_squares(cp.multiply(np.sqrt(Qd), dqa + q_a_n_last))
         obj += cp.sum_squares(cp.multiply(np.sqrt(Q_diag_modified), dqa + q_a_current))
 
+        # Soft non-penetration: penalize slack if enabled.
+        if penetration_slack is not None:
+            obj += float(self.penetration_slack_weight) * cp.sum_squares(penetration_slack)
+
         # Smoothness cost (matching original implementation exactly)
         # CRITICAL FIX: Use previous frame's velocity, not current guess
         if q_last is not None:
@@ -591,9 +684,8 @@ class GenericInteractionRetargeter:
 
         # Solve
         problem = cp.Problem(cp.Minimize(obj), constraints)
-        
-        import sys
-        show_solver_debug = hasattr(sys, '_omni_frame_count') and sys._omni_frame_count <= 5
+
+        show_solver_debug = bool(self._debug_this_frame)
         
         try:
             problem.solve(solver=cp.CLARABEL, verbose=False)
@@ -867,7 +959,8 @@ class GenericInteractionRetargeter:
         geom1_name: str,
         geom2_name: str,
         fromto: np.ndarray, 
-        dist: float
+        dist: float,
+        contact_normal_world_ba: np.ndarray | None = None,
     ) -> np.ndarray:
         """
         Compute relative contact Jacobian for a geometry pair.
@@ -891,14 +984,30 @@ class GenericInteractionRetargeter:
         norm_v = np.linalg.norm(v)
 
         if norm_v > 1e-12:
-            nhat_BA_W = np.sign(dist) * (v / norm_v)
+            # IMPORTANT:
+            # - For some geom pairs (notably mesh), MuJoCo's `mj_geomDistance` may clamp penetration to dist==0,
+            #   i.e. it never returns negative signed distance.
+            # - Using np.sign(dist) would then produce a zero normal at dist==0, disabling constraints entirely.
+            # We therefore treat dist>=0 as the same "side" (s=+1), and only flip when dist<0.
+            s = -1.0 if dist < 0.0 else 1.0
+            nhat_BA_W = s * (v / norm_v)
         # Degenerate case: points coincide
-        elif "ground" in geom2_name.lower():
-            nhat_BA_W = np.array([0.0, 0.0, 1.0]) * (1.0 if dist >= 0 else -1.0)
-        elif "ground" in geom1_name.lower():
-            nhat_BA_W = np.array([0.0, 0.0, -1.0]) * (1.0 if dist >= 0 else -1.0)
+        elif contact_normal_world_ba is not None and np.linalg.norm(contact_normal_world_ba) > 1e-12:
+            nhat_BA_W = np.asarray(contact_normal_world_ba, dtype=float).reshape(3)
+        elif any(token in (geom2_name or "").lower() for token in ("ground", "scene", "terrain")):
+            s = -1.0 if dist < 0.0 else 1.0
+            nhat_BA_W = np.array([0.0, 0.0, 1.0]) * s
+        elif any(token in (geom1_name or "").lower() for token in ("ground", "scene", "terrain")):
+            s = -1.0 if dist < 0.0 else 1.0
+            nhat_BA_W = np.array([0.0, 0.0, -1.0]) * s
         else:
-            nhat_BA_W = np.array([0.0, 0.0, 0.0])
+            # Last resort: fall back to center-to-center direction.
+            v_center = self.robot_data.geom_xpos[geom1_id] - self.robot_data.geom_xpos[geom2_id]
+            norm_center = float(np.linalg.norm(v_center))
+            if norm_center > 1e-12:
+                nhat_BA_W = v_center / norm_center
+            else:
+                nhat_BA_W = np.array([0.0, 0.0, 0.0])
 
         # Get body IDs for the geometries
         body1_id = self.robot_model.geom_bodyid[geom1_id]
@@ -914,14 +1023,55 @@ class GenericInteractionRetargeter:
         # Project onto contact normal
         return nhat_BA_W @ Jc
 
-    def _compute_penetration_constraints(self, q: np.ndarray, dqa: cp.Variable) -> List[cp.Constraint]:
+    def _prefilter_contact_normals_with_mj_collision(self, threshold: float) -> dict[tuple[int, int], np.ndarray]:
         """
-        Compute penetration constraints using MuJoCo collision detection.
-        
-        This method uses MuJoCo's collision detection to find geometry pairs that are
-        close to contact, then computes signed distance and contact Jacobians for each pair.
+        Use MuJoCo collision to collect candidate pair normals.
+
+        Returns mapping (min_geom_id, max_geom_id) -> normal_world(min->max).
+
+        Notes:
+        - This is used as a robustness fallback when `mj_geomDistance` returns degenerate closest points
+          (e.g. dist==0 and fromto points coincide).
+        - The normal direction follows MuJoCo's contact convention: it points from `contact.geom1` to
+          `contact.geom2`. We canonicalize the key to (min,max) and flip the normal accordingly.
         """
-        constraints = []
+        m, d = self.robot_model, self.robot_data
+        ngeom = m.ngeom
+
+        if not hasattr(self, "_saved_margins"):
+            self._saved_margins = np.empty_like(m.geom_margin)
+        self._saved_margins[:] = m.geom_margin
+        m.geom_margin[:] = float(threshold)
+
+        mujoco.mj_collision(m, d)
+
+        normals: dict[tuple[int, int], np.ndarray] = {}
+        for k in range(d.ncon):
+            c = d.contact[k]
+            g1, g2 = int(c.geom1), int(c.geom2)
+            if g1 < 0 or g2 < 0 or g1 >= ngeom or g2 >= ngeom:
+                continue
+            n12 = np.asarray(c.frame[:3], dtype=float).reshape(3)
+            if np.linalg.norm(n12) < 1e-12:
+                continue
+            a, b = (g1, g2) if g1 < g2 else (g2, g1)
+            n_ab = n12 if (a == g1 and b == g2) else -n12
+            # Keep the first one; contacts can be many, but any normal is better than none for degeneracy.
+            normals.setdefault((a, b), n_ab)
+
+        m.geom_margin[:] = self._saved_margins
+        return normals
+
+    def _compute_penetration_inequalities(self, q: np.ndarray) -> list[tuple[np.ndarray, float]]:
+        """
+        Compute linearized non-penetration inequalities using MuJoCo collision detection.
+
+        Returns a list of (J_actuated, rhs) such that:
+            J_actuated @ dqa >= rhs
+        where rhs is defined so that (in the local linearization) enforcing the inequality helps maintain
+        a minimum separation of `penetration_tolerance` along the contact normal direction.
+        """
+        inequalities: list[tuple[np.ndarray, float]] = []
 
         # Update robot state (should already be done, but ensure it's current)
         self.robot_data.qpos[:] = q
@@ -930,55 +1080,130 @@ class GenericInteractionRetargeter:
         m, d = self.robot_model, self.robot_data
         threshold = float(self.collision_detection_threshold)
 
-        # 1) Fast prefilter via mj_collision
-        candidates = self._prefilter_pairs_with_mj_collision(threshold)
+        # Direct robot-vs-ground scan.
+        # We intentionally do NOT rely on `mj_collision` prefilter because mesh interactions can be missed
+        # (and `mj_geomDistance` for mesh can clamp penetrations to dist==0). Scanning all robot geoms
+        # against a small set of ground/scene geoms is cheap (O(ngeom)).
+        if not hasattr(self, "_geom_names") or len(getattr(self, "_geom_names", [])) != m.ngeom:
+            self._geom_names = [mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, g) or "" for g in range(m.ngeom)]
 
-        # 2) Compute precise distance and Jacobians for each candidate
-        fromto = np.zeros(6, dtype=float)
         contype, conaff = m.geom_contype, m.geom_conaffinity
+        fromto = np.zeros(6, dtype=float)
 
-        def masks_ok(g1, g2):
-            """Check if this geometry pair should be considered for collision."""
-            # Skip if both geometries have no collision masks
-            if contype[g1] == 0 and conaff[g1] == 0:
-                return False
-            if contype[g2] == 0 and conaff[g2] == 0:
-                return False
-            
-            # For now, accept all valid collision pairs
-            # You can add custom filtering logic here (e.g., skip certain object-ground pairs)
-            return True
+        def _is_ground(name: str) -> bool:
+            name_lower = (name or "").lower()
+            return ("ground" in name_lower) or ("scene" in name_lower) or ("terrain" in name_lower)
 
-        for g1, g2 in candidates:
-            if not masks_ok(g1, g2):
+        contact_normals = self._prefilter_contact_normals_with_mj_collision(threshold)
+
+        ground_geom_ids: list[int] = []
+        robot_geom_ids: list[int] = []
+        for gid, name in enumerate(self._geom_names):
+            if contype[gid] == 0 and conaff[gid] == 0:
                 continue
+            if _is_ground(name):
+                ground_geom_ids.append(gid)
+            else:
+                robot_geom_ids.append(gid)
 
-            fromto[:] = 0.0
-            dist = mujoco.mj_geomDistance(m, d, g1, g2, threshold, fromto)
-            
-            if dist <= threshold:
-                # Compute relative contact Jacobian
-                J_rel = self._compute_jacobian_for_contact_relative(
-                    g1, g2, self._geom_names[g1], self._geom_names[g2], fromto, dist
+        checked = len(ground_geom_ids) * len(robot_geom_ids)
+        use_prefilter = checked > 4000
+
+        scored: list[tuple[float, int, int, np.ndarray]] = []
+
+        if use_prefilter:
+            # Holosoma-style prefilter: use mj_collision broadphase with temporary margins.
+            candidates = self._prefilter_pairs_with_mj_collision(threshold)
+            for g1, g2 in candidates:
+                n1 = self._geom_names[g1]
+                n2 = self._geom_names[g2]
+                g1_ground = _is_ground(n1)
+                g2_ground = _is_ground(n2)
+                if g1_ground == g2_ground:
+                    continue
+                # Ensure order is (robot, ground).
+                robot_id, ground_id = (g1, g2) if (not g1_ground) else (g2, g1)
+
+                fromto[:] = 0.0
+                dist = float(mujoco.mj_geomDistance(m, d, robot_id, ground_id, threshold, fromto))
+                if dist < (threshold - 1e-9):
+                    scored.append((dist, robot_id, ground_id, fromto.copy()))
+        else:
+            # Direct scan: cheap when number of grounds is small.
+            for ground_id in ground_geom_ids:
+                for robot_id in robot_geom_ids:
+                    fromto[:] = 0.0
+                    dist = float(mujoco.mj_geomDistance(m, d, robot_id, ground_id, threshold, fromto))
+                    # IMPORTANT: `mj_geomDistance(..., distmax=threshold, ...)` can return exactly `threshold`
+                    # as a sentinel for "distance >= threshold". Only keep strictly-below-threshold pairs.
+                    if dist < (threshold - 1e-9):
+                        scored.append((dist, robot_id, ground_id, fromto.copy()))
+
+        # Prioritize closest pairs.
+        scored.sort(key=lambda item: item[0])
+        if self.max_penetration_constraints > 0:
+            scored = scored[: self.max_penetration_constraints]
+
+        if self._debug_this_frame:
+            if scored:
+                min_dist = float(scored[0][0])
+                max_dist = float(scored[-1][0])
+            else:
+                min_dist = float("nan")
+                max_dist = float("nan")
+            print(
+                f"[collision] grounds={len(ground_geom_ids)} robots={len(robot_geom_ids)} checked={checked} kept={len(scored)} "
+                f"dist=[{min_dist:.4f},{max_dist:.4f}] thr={threshold:.4f} tol={float(self.penetration_tolerance):.4e} "
+                f"mode={self.penetration_constraint_mode}"
+            )
+
+        for dist, g1, g2, fromto_i in scored:
+            contact_normal_ba = None
+            key = (min(g1, g2), max(g1, g2))
+            if key in contact_normals:
+                # contact_normals stores normal from min->max. We need normal from geom2->geom1.
+                n_min_to_max = contact_normals[key]
+                if g2 == key[0] and g1 == key[1]:
+                    contact_normal_ba = n_min_to_max
+                elif g2 == key[1] and g1 == key[0]:
+                    contact_normal_ba = -n_min_to_max
+
+            J_rel = self._compute_jacobian_for_contact_relative(
+                g1,
+                g2,
+                self._geom_names[g1],
+                self._geom_names[g2],
+                fromto_i,
+                dist,
+                contact_normal_world_ba=contact_normal_ba,
+            )
+
+            # Extract optimized part (q_a_indices are qpos indices, J_rel is length nq).
+            valid_indices = self.q_a_indices[self.q_a_indices < J_rel.shape[0]]
+            J_rel_actuated = J_rel[valid_indices]
+
+            if len(J_rel_actuated) < self.nq_a:
+                J_pad = np.zeros(self.nq_a)
+                J_pad[: len(J_rel_actuated)] = J_rel_actuated
+                J_rel_actuated = J_pad
+
+            # Enforce a minimum separation.
+            # For mesh geoms, MuJoCo's mj_geomDistance may clamp penetrations to dist==0 (never negative),
+            # so holosoma's rhs=(-dist - tol) would never activate. We instead enforce dist >= tol.
+            rhs = float(self.penetration_tolerance) - float(dist)
+            inequalities.append((J_rel_actuated, rhs))
+
+        if self._debug_this_frame and scored:
+            if inequalities:
+                rhs_vals = np.array([rhs for _J, rhs in inequalities], dtype=float)
+                n_viol = int(np.sum(rhs_vals > 0.0))
+                print(
+                    f"[collision] ineqs={len(inequalities)} violating={n_viol} rhs=[{rhs_vals.min():.6f},{rhs_vals.max():.6f}]"
                 )
-                
-                # Extract optimized part
-                # J_rel has shape (nq,), indices match qpos coordinates
-                valid_indices = self.q_a_indices[self.q_a_indices < J_rel.shape[0]]
+            else:
+                print("[collision] ineqs=0")
 
-                J_rel_actuated = J_rel[valid_indices]
-                
-                # Pad if needed
-                if len(J_rel_actuated) < self.nq_a:
-                    J_pad = np.zeros(self.nq_a)
-                    J_pad[:len(J_rel_actuated)] = J_rel_actuated
-                    J_rel_actuated = J_pad
-                
-                # Add non-penetration constraint: J @ dqa >= -dist - tolerance
-                rhs = -dist - self.penetration_tolerance
-                constraints.append(J_rel_actuated @ dqa >= rhs)
-
-        return constraints
+        return inequalities
 
 
 def retarget_smplx_to_robot(
@@ -1006,8 +1231,14 @@ def retarget_smplx_to_robot(
         raise ValueError("Invalid SMPLX trajectory format")
 
     # Load robot
-    robot_urdf = yourdfpy.URDF.load(str(robot_urdf_path), load_meshes=True)
-    robot_model = mujoco.MjModel.from_xml_path(str(robot_urdf_path))
+    _ = yourdfpy.URDF.load(str(robot_urdf_path), load_meshes=True)
+
+    robot_model_path = robot_urdf_path
+    if robot_urdf_path.suffix.lower() == ".urdf":
+        adjacent_xml = robot_urdf_path.with_suffix(".xml")
+        if adjacent_xml.exists():
+            robot_model_path = adjacent_xml
+    robot_model = mujoco.MjModel.from_xml_path(str(robot_model_path))
     robot_data = mujoco.MjData(robot_model)
 
     # Detect robot height if not provided
@@ -1021,6 +1252,7 @@ def retarget_smplx_to_robot(
     from .core import OmniRetargeter
     temp_retargeter = OmniRetargeter(
         robot_urdf_path=robot_urdf_path,
+        robot_mujoco_xml_path=robot_model_path if robot_model_path.suffix.lower() == ".xml" else None,
         terrain_mesh_path=terrain_mesh_path,
         joint_mapping=joint_mapping,
         robot_height=robot_height

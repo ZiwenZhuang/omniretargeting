@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import numpy as np
+import re
+import tempfile
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Union, Any
 import trimesh
@@ -30,6 +32,16 @@ class OmniRetargeter:
         joint_mapping: Dict[str, str],
         robot_height: Optional[float] = None,
         smplx_joint_names: Optional[List[str]] = None,
+        robot_mujoco_xml_path: Optional[Union[str, Path]] = None,
+        debug_frames: int = 5,
+        enable_penetration_constraints: bool = True,
+        collision_detection_threshold: float = 0.1,
+        penetration_tolerance: float = 1e-3,
+        max_penetration_constraints: int = 64,
+        penetration_constraint_mode: str = "soft",
+        penetration_slack_weight: float = 1e4,
+        terrain_scale_override: float | None = None,
+        collision_proxy_boxes: tuple[np.ndarray, np.ndarray] | None = None,
     ):
         """
         Initialize the OmniRetargeter.
@@ -40,10 +52,32 @@ class OmniRetargeter:
             joint_mapping: Dictionary mapping SMPLX joint names to robot link names
             robot_height: Height of the robot in meters (auto-detected if None)
             smplx_joint_names: List of SMPLX joint names in order (required for proper joint mapping)
+            robot_mujoco_xml_path: Optional MuJoCo MJCF XML path for loading the robot model.
+                Recommended when URDF mesh resolution/loading is problematic in MuJoCo.
+            debug_frames: Print solver debug output for the first N frames.
+            enable_penetration_constraints: If True, add non-penetration constraints against the terrain.
+            collision_detection_threshold: MuJoCo distance threshold for collision candidate pairs.
+            penetration_tolerance: Allowed penetration slack (meters).
+            terrain_scale_override: Optional fixed terrain scale factor. If provided, the retargeter
+                will not estimate human height from the trajectory, and will use this scale to scale
+                both terrain and human joints. This is recommended when you want consistent scaling
+                across pipeline/visualization (e.g., assume human height is 1.7m).
+            collision_proxy_boxes: Optional (centers, half_sizes) arrays for primitive collision proxies,
+                both in *scaled* world coordinates. When provided, these geoms are injected into the
+                collision model and used for non-penetration.
         """
         self.robot_urdf_path = Path(robot_urdf_path)
         self.terrain_mesh_path = Path(terrain_mesh_path)
         self.joint_mapping = joint_mapping
+        self.debug_frames = max(0, int(debug_frames))
+        self.enable_penetration_constraints = bool(enable_penetration_constraints)
+        self.collision_detection_threshold = float(collision_detection_threshold)
+        self.penetration_tolerance = float(penetration_tolerance)
+        self.max_penetration_constraints = max(0, int(max_penetration_constraints))
+        self.penetration_constraint_mode = str(penetration_constraint_mode)
+        self.penetration_slack_weight = float(penetration_slack_weight)
+        self.terrain_scale_override = None if terrain_scale_override is None else float(terrain_scale_override)
+        self.collision_proxy_boxes = collision_proxy_boxes
 
         # SMPLX joint names (default to standard SMPLX joint ordering)
         if smplx_joint_names is None:
@@ -84,12 +118,49 @@ class OmniRetargeter:
         # Store the filtered joint mapping (only valid joints) for use in retargeter
         self.valid_joint_mapping = {name: joint_mapping[name] for name in self.valid_joint_names}
 
-        # Load robot URDF
-        self.robot_urdf = yourdfpy.URDF.load(str(robot_urdf_path), load_meshes=True)
-        self.robot_model = mujoco.MjModel.from_xml_path(str(robot_urdf_path))
+        # Load robot description for visualization / metadata (best-effort).
+        # Retargeting itself depends on MuJoCo model; URDF parsing is optional.
+        self.robot_urdf = None
+        if self.robot_urdf_path.suffix.lower() == ".urdf":
+            try:
+                self.robot_urdf = yourdfpy.URDF.load(str(self.robot_urdf_path), load_meshes=True)
+            except Exception as exc:
+                print(f"Warning: yourdfpy failed to load meshes from URDF ({self.robot_urdf_path}): {exc}")
+                try:
+                    self.robot_urdf = yourdfpy.URDF.load(str(self.robot_urdf_path), load_meshes=False)
+                except Exception:
+                    self.robot_urdf = None
+
+        # Load MuJoCo model.
+        # NOTE: MuJoCo's URDF importer can be fragile with mesh path resolution; prefer MJCF if available.
+        if robot_mujoco_xml_path is not None:
+            mujoco_model_path = Path(robot_mujoco_xml_path)
+        elif self.robot_urdf_path.suffix.lower() == ".urdf":
+            adjacent_xml = self.robot_urdf_path.with_suffix(".xml")
+            mujoco_model_path = adjacent_xml if adjacent_xml.exists() else self.robot_urdf_path
+        else:
+            mujoco_model_path = self.robot_urdf_path
+        try:
+            self.robot_model = mujoco.MjModel.from_xml_path(str(mujoco_model_path))
+        except Exception as exc:
+            # Fallback: if an URDF is provided, try adjacent .xml (common in holosoma_retargeting assets).
+            fallback_xml = self.robot_urdf_path.with_suffix(".xml")
+            if self.robot_urdf_path.suffix.lower() == ".urdf" and fallback_xml.exists():
+                print(
+                    f"Warning: MuJoCo failed to load URDF ({mujoco_model_path}); trying MJCF fallback {fallback_xml}."
+                )
+                self.robot_model = mujoco.MjModel.from_xml_path(str(fallback_xml))
+                mujoco_model_path = fallback_xml
+            else:
+                raise RuntimeError(
+                    f"Failed to load MuJoCo model from {mujoco_model_path}. "
+                    "If you are providing a URDF, consider passing robot_mujoco_xml_path pointing to a MJCF .xml."
+                ) from exc
+        self.robot_mujoco_xml_path = mujoco_model_path
         self.robot_data = mujoco.MjData(self.robot_model)
 
         # Load terrain mesh
+        print(f"Loaded terrain: {str(terrain_mesh_path)}")
         self.terrain_mesh = trimesh.load(str(terrain_mesh_path))
 
         # Detect robot height if not provided
@@ -226,7 +297,11 @@ class OmniRetargeter:
             - retargeted_trajectory: Robot motion of shape (T, 7 + DOF) with [pos, quat, joints]
         """
         # Step 1: Compute terrain scaling factor
-        terrain_scale = self._compute_terrain_scale(smplx_trajectory)
+        if self.terrain_scale_override is not None:
+            terrain_scale = float(self.terrain_scale_override)
+            print(f"Using terrain scale override: {terrain_scale:.6f}")
+        else:
+            terrain_scale = self._compute_terrain_scale(smplx_trajectory)
 
         # Step 2: Scale terrain mesh
         scaled_terrain = self._scale_terrain_mesh(terrain_scale)
@@ -246,6 +321,7 @@ class OmniRetargeter:
         retargeted_motion = self._perform_retargeting(
             processed_trajectory,
             scaled_terrain,
+            terrain_scale,
             base_orientations=base_orientations,
             base_translations=processed_base_translations,
         )
@@ -350,6 +426,7 @@ class OmniRetargeter:
         self,
         processed_trajectory: np.ndarray,
         scaled_terrain: trimesh.Trimesh,
+        terrain_scale: float,
         base_orientations: np.ndarray | None = None,
         base_translations: np.ndarray | None = None,
     ) -> np.ndarray:
@@ -360,14 +437,28 @@ class OmniRetargeter:
         # Note: scaled_terrain is already scaled by _scale_terrain_mesh
         # CRITICAL: Pass only valid_joint_mapping to ensure consistent sizes
         # This ensures robot_points and human_joints have the same number of joints
+        solver_model = self.robot_model
+        solver_data = self.robot_data
+        if self.enable_penetration_constraints:
+            collision_model = self._compile_collision_model(terrain_scale=float(terrain_scale))
+            if collision_model is not None:
+                solver_model = collision_model
+                solver_data = mujoco.MjData(solver_model)
+
         retargeter = GenericInteractionRetargeter(
-            self.robot_model,
-            self.robot_data,
+            solver_model,
+            solver_data,
             scaled_terrain,
             self.valid_joint_mapping,  # Use filtered mapping, not full joint_mapping
             self.robot_height,
-            collision_detection_threshold=0.1,
+            penetration_tolerance=self.penetration_tolerance,
+            collision_detection_threshold=self.collision_detection_threshold,
             valid_joint_names=self.valid_joint_names,  # CRITICAL: Pass ordered joint names for consistency
+            debug_frames=self.debug_frames,
+            enable_penetration_constraints=self.enable_penetration_constraints,
+            max_penetration_constraints=self.max_penetration_constraints,
+            penetration_constraint_mode=self.penetration_constraint_mode,
+            penetration_slack_weight=self.penetration_slack_weight,
         )
 
         # Retarget each frame
@@ -510,6 +601,96 @@ class OmniRetargeter:
             q_init = q_opt
 
         return np.array(retargeted_trajectory)
+
+    def _compile_collision_model(self, *, terrain_scale: float) -> mujoco.MjModel | None:
+        """
+        Compile a temporary MuJoCo model that includes the terrain mesh as a collidable 'ground' geom.
+
+        The default robot MJCFs in holosoma assets include a plane ground. For climbing_scene we need
+        collision distances against the *scene mesh* instead. We inject a mesh geom named with 'ground'
+        into the worldbody and remove the default plane ground so that `_compute_penetration_constraints`
+        can filter robot-vs-ground pairs reliably.
+        """
+        mjcf_path = Path(self.robot_mujoco_xml_path)
+        if mjcf_path.suffix.lower() != ".xml" or not mjcf_path.exists():
+            return None
+        if not self.terrain_mesh_path.exists():
+            return None
+
+        xml_text = mjcf_path.read_text()
+
+        # Make meshdir absolute so compiling from a temp file still finds robot mesh assets.
+        robot_dir = mjcf_path.parent
+        assets_dir = (robot_dir / "assets").resolve()
+
+        def _replace_meshdir(match: re.Match[str]) -> str:
+            value = match.group(1)
+            if value.startswith("/") or value.startswith("\\"):
+                return f'meshdir="{value}"'
+            return f'meshdir="{assets_dir.as_posix()}/"'
+
+        xml_text = re.sub(r'meshdir="([^"]*)"', _replace_meshdir, xml_text, count=1)
+
+        # Keep the default ground plane if present (holosoma relies on it).
+        #
+        # For climbing_scene we *can* add the scene mesh as an additional collidable ground geom.
+        # However, MuJoCo mesh collision/distance can be unreliable for concave meshes; when a collision
+        # proxy is provided (e.g. voxel boxes), we prefer to rely on the proxy and skip mesh collision
+        # entirely to avoid "dist==0" degenerate normals dominating the constraint set.
+
+        terrain_mesh_abs = self.terrain_mesh_path.resolve().as_posix()
+        terrain_mesh_name = "terrain_collision_mesh"
+        terrain_geom_name = "ground_scene"
+        scale_str = f"{float(terrain_scale):.8f} {float(terrain_scale):.8f} {float(terrain_scale):.8f}"
+
+        inject_scene_mesh_collision = self.collision_proxy_boxes is None
+
+        asset_inject = ""
+        worldbody_inject = ""
+        if inject_scene_mesh_collision:
+            asset_inject = f'    <mesh name="{terrain_mesh_name}" file="{terrain_mesh_abs}" scale="{scale_str}"/>\n'
+            worldbody_inject = (
+                f'    <geom name="{terrain_geom_name}" type="mesh" mesh="{terrain_mesh_name}" '
+                'contype="1" conaffinity="1" rgba="0 0 0 0"/>\n'
+            )
+
+        proxy_inject = ""
+        if self.collision_proxy_boxes is not None:
+            centers, half_sizes = self.collision_proxy_boxes
+            centers = np.asarray(centers, dtype=float).reshape(-1, 3)
+            half_sizes = np.asarray(half_sizes, dtype=float).reshape(-1, 3)
+            if centers.shape[0] != half_sizes.shape[0]:
+                raise ValueError(
+                    f"collision_proxy_boxes centers ({centers.shape[0]}) and half_sizes ({half_sizes.shape[0]}) mismatch"
+                )
+            for i in range(centers.shape[0]):
+                cx, cy, cz = centers[i].tolist()
+                sx, sy, sz = half_sizes[i].tolist()
+                proxy_inject += (
+                    f'    <geom name="scene_proxy_box_{i:04d}" type="box" '
+                    f'pos="{cx:.6f} {cy:.6f} {cz:.6f}" size="{sx:.6f} {sy:.6f} {sz:.6f}" '
+                    'contype="1" conaffinity="1" rgba="0 0 0 0"/>\n'
+                )
+
+        if "</asset>" in xml_text:
+            xml_text = xml_text.replace("</asset>", asset_inject + "  </asset>", 1)
+        else:
+            return None
+
+        if "<worldbody>" in xml_text:
+            xml_text = xml_text.replace("<worldbody>", "<worldbody>\n" + worldbody_inject + proxy_inject, 1)
+        else:
+            return None
+
+        tmp_dir = Path(tempfile.gettempdir())
+        tmp_path = tmp_dir / f"omniretargeting_collision_{mjcf_path.stem}.xml"
+        tmp_path.write_text(xml_text)
+
+        try:
+            return mujoco.MjModel.from_xml_path(str(tmp_path))
+        except Exception as exc:
+            print(f"Warning: failed to compile collision model MJCF {tmp_path}: {exc}")
+            return None
 
     def _estimate_base_orientation_from_joints(self, joints: np.ndarray, last_quat: np.ndarray | None = None) -> np.ndarray | None:
         """
