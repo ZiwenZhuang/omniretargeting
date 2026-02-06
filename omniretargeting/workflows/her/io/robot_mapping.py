@@ -50,9 +50,41 @@ DEFAULT_SMPLX22_JOINT_MAPPINGS: dict[RobotType, dict[str, str]] = {
     },
 }
 
+# Foot sticking links (used for contact-driven foot sticking constraints).
+# These match the holosoma_retargeting convention: multiple small sphere links under each foot.
+DEFAULT_FOOT_STICKING_LINKS: dict[RobotType, list[str]] = {
+    "g1": [
+        "left_ankle_roll_sphere_1_link",
+        "right_ankle_roll_sphere_1_link",
+        "left_ankle_roll_sphere_2_link",
+        "right_ankle_roll_sphere_2_link",
+        "left_ankle_roll_sphere_3_link",
+        "right_ankle_roll_sphere_3_link",
+        "left_ankle_roll_sphere_4_link",
+        "right_ankle_roll_sphere_4_link",
+    ],
+    "t1": [
+        "left_foot_sphere_1_link",
+        "right_foot_sphere_1_link",
+        "left_foot_sphere_2_link",
+        "right_foot_sphere_2_link",
+        "left_foot_sphere_3_link",
+        "right_foot_sphere_3_link",
+        "left_foot_sphere_4_link",
+        "right_foot_sphere_4_link",
+        "left_foot_sphere_5_link",
+        "right_foot_sphere_5_link",
+    ],
+}
+
 
 def get_default_joint_mapping(robot: RobotType) -> dict[str, str]:
     if robot not in DEFAULT_SMPLX22_JOINT_MAPPINGS:
         raise ValueError(f"No default joint mapping for robot: {robot}")
     return dict(DEFAULT_SMPLX22_JOINT_MAPPINGS[robot])
 
+
+def get_default_foot_sticking_links(robot: RobotType) -> list[str]:
+    if robot not in DEFAULT_FOOT_STICKING_LINKS:
+        raise ValueError(f"No default foot sticking links for robot: {robot}")
+    return list(DEFAULT_FOOT_STICKING_LINKS[robot])

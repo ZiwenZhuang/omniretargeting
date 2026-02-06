@@ -42,6 +42,9 @@ class OmniRetargeter:
         penetration_slack_weight: float = 1e4,
         terrain_scale_override: float | None = None,
         collision_proxy_boxes: tuple[np.ndarray, np.ndarray] | None = None,
+        activate_foot_sticking: bool = True,
+        foot_sticking_tolerance: float = 1e-3,
+        foot_sticking_links: list[str] | None = None,
     ):
         """
         Initialize the OmniRetargeter.
@@ -78,6 +81,9 @@ class OmniRetargeter:
         self.penetration_slack_weight = float(penetration_slack_weight)
         self.terrain_scale_override = None if terrain_scale_override is None else float(terrain_scale_override)
         self.collision_proxy_boxes = collision_proxy_boxes
+        self.activate_foot_sticking = bool(activate_foot_sticking)
+        self.foot_sticking_tolerance = float(foot_sticking_tolerance)
+        self.foot_sticking_links = list(foot_sticking_links) if foot_sticking_links is not None else None
 
         # SMPLX joint names (default to standard SMPLX joint ordering)
         if smplx_joint_names is None:
@@ -283,6 +289,7 @@ class OmniRetargeter:
         base_orientations: np.ndarray | None = None,
         base_translations: np.ndarray | None = None,
         visualize_trajectory: bool = True,
+        foot_sticking_sequences: list[dict[str, bool]] | None = None,
     ) -> Tuple[float, np.ndarray]:
         """
         Retarget SMPLX motion to the robot on the terrain.
@@ -324,6 +331,7 @@ class OmniRetargeter:
             terrain_scale,
             base_orientations=base_orientations,
             base_translations=processed_base_translations,
+            foot_sticking_sequences=foot_sticking_sequences,
         )
 
         return terrain_scale, retargeted_motion
@@ -429,6 +437,7 @@ class OmniRetargeter:
         terrain_scale: float,
         base_orientations: np.ndarray | None = None,
         base_translations: np.ndarray | None = None,
+        foot_sticking_sequences: list[dict[str, bool]] | None = None,
     ) -> np.ndarray:
         """Perform the actual motion retargeting using generic interaction mesh retargeting."""
         from .retargeting import GenericInteractionRetargeter
@@ -452,6 +461,7 @@ class OmniRetargeter:
             self.valid_joint_mapping,  # Use filtered mapping, not full joint_mapping
             self.robot_height,
             penetration_tolerance=self.penetration_tolerance,
+            foot_sticking_tolerance=self.foot_sticking_tolerance,
             collision_detection_threshold=self.collision_detection_threshold,
             valid_joint_names=self.valid_joint_names,  # CRITICAL: Pass ordered joint names for consistency
             debug_frames=self.debug_frames,
@@ -459,6 +469,8 @@ class OmniRetargeter:
             max_penetration_constraints=self.max_penetration_constraints,
             penetration_constraint_mode=self.penetration_constraint_mode,
             penetration_slack_weight=self.penetration_slack_weight,
+            activate_foot_sticking=self.activate_foot_sticking,
+            foot_sticking_links=self.foot_sticking_links,
         )
 
         # Retarget each frame
@@ -591,9 +603,16 @@ class OmniRetargeter:
 
             # Retarget frame with previous frame as reference for smoothness
             q_last = retargeted_trajectory[-1] if len(retargeted_trajectory) > 0 else None
+            foot_sticking = None
+            if foot_sticking_sequences is not None and frame_idx < len(foot_sticking_sequences):
+                fs = foot_sticking_sequences[frame_idx] or {}
+                left = bool(fs.get("L_Foot", fs.get("L_Toe", False)))
+                right = bool(fs.get("R_Foot", fs.get("R_Toe", False)))
+                foot_sticking = (left, right)
             q_opt = retargeter.retarget_frame(
                 mapped_joints, q_init, q_last=q_last, 
-                target_base_orientation=target_quat_wxyz
+                target_base_orientation=target_quat_wxyz,
+                foot_sticking=foot_sticking,
             )
             retargeted_trajectory.append(q_opt)
 

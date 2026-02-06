@@ -45,6 +45,8 @@ class GenericInteractionRetargeter:
         step_size: float = 0.2,
         penetration_tolerance: float = 1e-3,
         foot_sticking_tolerance: float = 1e-3,
+        activate_foot_sticking: bool = True,
+        foot_sticking_links: Optional[List[str]] = None,
         collision_detection_threshold: float = 0.1,
         valid_joint_names: Optional[List[str]] = None,
         debug_frames: int = 5,
@@ -98,6 +100,7 @@ class GenericInteractionRetargeter:
         self.step_size = step_size
         self.penetration_tolerance = penetration_tolerance
         self.foot_sticking_tolerance = foot_sticking_tolerance
+        self.activate_foot_sticking = bool(activate_foot_sticking)
         self.collision_detection_threshold = collision_detection_threshold
         self.debug_frames = max(0, int(debug_frames))
         self.print_joint_order = bool(print_joint_order)
@@ -110,6 +113,15 @@ class GenericInteractionRetargeter:
         self._frame_count = 0
         self._debug_this_frame = False
         self._joint_order_printed = False
+
+        self.foot_sticking_links = list(foot_sticking_links) if foot_sticking_links is not None else None
+        if self.foot_sticking_links is None:
+            # Best-effort default: use the mapped foot links if present in joint_mapping.
+            default_links: list[str] = []
+            for k in ("L_Foot", "R_Foot"):
+                if k in self.joint_mapping:
+                    default_links.append(str(self.joint_mapping[k]))
+            self.foot_sticking_links = default_links
 
         # Setup robot configuration
         self._setup_robot_config()
@@ -256,7 +268,8 @@ class GenericInteractionRetargeter:
         q_init: np.ndarray,
         max_iter: int = 10,
         q_last: Optional[np.ndarray] = None,
-        target_base_orientation: Optional[np.ndarray] = None
+        target_base_orientation: Optional[np.ndarray] = None,
+        foot_sticking: Optional[Tuple[bool, bool]] = None,
     ) -> np.ndarray:
         """
         Retarget a single frame of human motion to robot motion.
@@ -295,7 +308,8 @@ class GenericInteractionRetargeter:
             scaled_terrain_points,
             max_iter=max_iter,
             q_last=q_last,
-            target_base_orientation=target_base_orientation
+            target_base_orientation=target_base_orientation,
+            foot_sticking=foot_sticking,
         )
 
         return q_opt
@@ -308,7 +322,8 @@ class GenericInteractionRetargeter:
         terrain_points: np.ndarray,
         max_iter: int = 10,
         q_last: Optional[np.ndarray] = None,
-        target_base_orientation: Optional[np.ndarray] = None
+        target_base_orientation: Optional[np.ndarray] = None,
+        foot_sticking: Optional[Tuple[bool, bool]] = None,
     ) -> np.ndarray:
         """
         Optimize robot configuration using SQP with interaction mesh constraints.
@@ -345,7 +360,7 @@ class GenericInteractionRetargeter:
         for iteration in range(max_iter):
             # Single optimization step
             q_new, cost = self._single_optimization_step(
-                q, target_laplacian, adj_list, terrain_points, q_last, target_base_orientation
+                q, target_laplacian, adj_list, terrain_points, q_last, target_base_orientation, foot_sticking
             )
             
             if show_debug and iteration < 3:
@@ -446,7 +461,8 @@ class GenericInteractionRetargeter:
         adj_list: List[List[int]],
         terrain_points: np.ndarray,
         q_last: Optional[np.ndarray] = None,
-        target_base_orientation: Optional[np.ndarray] = None
+        target_base_orientation: Optional[np.ndarray] = None,
+        foot_sticking: Optional[Tuple[bool, bool]] = None,
     ) -> Tuple[np.ndarray, float]:
         """
         Single SQP optimization step.
@@ -591,6 +607,76 @@ class GenericInteractionRetargeter:
         # Note: J_L already has columns only for q_a_indices (from J_V construction)
         # But original slices again, so we match that exactly
         constraints.append(cp.Constant(J_L) @ dqa - lap_var == -lap0_vec)
+
+        # Contact-driven foot sticking (XY) constraints.
+        if (
+            self.activate_foot_sticking
+            and foot_sticking is not None
+            and q_last is not None
+            and self.foot_sticking_links is not None
+            and len(self.foot_sticking_links) > 0
+        ):
+            left_contact, right_contact = bool(foot_sticking[0]), bool(foot_sticking[1])
+            if left_contact or right_contact:
+                # Snapshot previous-frame foot positions by temporarily forwarding q_last.
+                q_backup = self.robot_data.qpos.copy()
+                try:
+                    self.robot_data.qpos[:] = q_last
+                    mujoco.mj_forward(self.robot_model, self.robot_data)
+                    prev_positions: dict[str, np.ndarray] = {}
+                    for link_name in self.foot_sticking_links:
+                        try:
+                            body_id = mujoco.mj_name2id(
+                                self.robot_model, mujoco.mjtObj.mjOBJ_BODY, str(link_name)
+                            )
+                        except Exception:
+                            continue
+                        if int(body_id) < 0:
+                            continue
+                        prev_positions[str(link_name)] = self.robot_data.xpos[body_id].copy()
+                finally:
+                    self.robot_data.qpos[:] = q_backup
+                    mujoco.mj_forward(self.robot_model, self.robot_data)
+
+                for link_name in self.foot_sticking_links:
+                    name = str(link_name)
+                    name_lower = name.lower()
+                    is_left = ("left" in name_lower) or name_lower.startswith("l_")
+                    is_right = ("right" in name_lower) or name_lower.startswith("r_")
+                    if is_left and not left_contact:
+                        continue
+                    if is_right and not right_contact:
+                        continue
+                    if (not is_left) and (not is_right):
+                        # If side is ambiguous, require both contacts to be safe.
+                        if not (left_contact and right_contact):
+                            continue
+
+                    if name not in prev_positions:
+                        continue
+
+                    try:
+                        body_id = mujoco.mj_name2id(self.robot_model, mujoco.mjtObj.mjOBJ_BODY, name)
+                    except Exception:
+                        continue
+                    if int(body_id) < 0:
+                        continue
+                    p_cur = self.robot_data.xpos[body_id].copy()
+                    p_prev = prev_positions[name]
+
+                    # Linearize p_new ≈ p_cur + J(q) dqa, and constrain p_new[:2] ≈ p_prev[:2].
+                    J_full = self._calc_contact_jacobian_from_point(body_id)
+                    Jxy = np.asarray(J_full[:2, self.q_a_indices], dtype=np.float64)
+                    delta = (p_prev - p_cur)[:2]
+                    tol = float(self.foot_sticking_tolerance)
+                    p_lb = delta - tol
+                    p_ub = delta + tol
+                    constraints.extend(
+                        [
+                            cp.Constant(Jxy) @ dqa >= p_lb,
+                            cp.Constant(Jxy) @ dqa <= p_ub,
+                        ]
+                    )
 
         # Joint limits
         q_a_current = q[self.q_a_indices]

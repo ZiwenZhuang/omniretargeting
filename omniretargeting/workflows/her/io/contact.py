@@ -74,4 +74,3 @@ def load_contact_flags(
     last = flags[-1] if flags.size else np.zeros((flags.shape[1],), dtype=bool)
     pad = np.repeat(last[None, :], num_frames - flags.shape[0], axis=0)
     return np.concatenate([flags, pad], axis=0)
-

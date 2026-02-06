@@ -36,8 +36,10 @@ from omniretargeting.workflows.her.io.her_results import (
 from omniretargeting.workflows.her.io.joints_map import OMNI_SMPLX22_JOINTS
 from omniretargeting.workflows.her.io.robot_mapping import (
     DEFAULT_ROBOT_URDF_PATHS,
+    get_default_foot_sticking_links,
     get_default_joint_mapping,
 )
+from omniretargeting.workflows.her.motion.foot_contact import contact_flags_to_sequences
 from omniretargeting.workflows.her.motion.height_correction import apply_contact_height_correction
 from omniretargeting.workflows.her.paths import (
     ROBOT_HEIGHTS_M,
@@ -240,6 +242,13 @@ def main(args: PipelineArgs) -> None:
     contact_npz_path = paths.prepared_data_dir / f"{args.seq}_contact.npz"
     save_contact_logits_from_results(video_results, contact_npz_path)
     contact_flags = load_contact_flags(contact_npz_path, num_frames=joints_22.shape[0])
+    foot_sticking_sequences = None
+    if contact_flags is not None:
+        foot_sticking_sequences = contact_flags_to_sequences(
+            contact_flags,
+            toe_names=("L_Foot", "R_Foot"),
+            num_frames=int(joints_22.shape[0]),
+        )
 
     # Keep global z_min disabled; use contact-driven per-frame vertical correction.
     joints_22_corrected, z_bias_per_frame = apply_contact_height_correction(
@@ -437,6 +446,9 @@ def main(args: PipelineArgs) -> None:
         debug_frames=int(getattr(args, "debug_frames", 0)),
         terrain_scale_override=float(scale_factor),
         collision_proxy_boxes=collision_proxy_boxes,
+        activate_foot_sticking=True,
+        foot_sticking_tolerance=1e-3,
+        foot_sticking_links=get_default_foot_sticking_links(args.robot),
         enable_penetration_constraints=bool(getattr(args, "enable_penetration_constraints", True)),
         collision_detection_threshold=float(getattr(args, "collision_detection_threshold", 0.1)),
         penetration_tolerance=float(getattr(args, "penetration_tolerance", 1e-3)),
@@ -448,6 +460,7 @@ def main(args: PipelineArgs) -> None:
     terrain_scale, retargeted_motion = retargeter.retarget_motion(
         joints_22_corrected,
         visualize_trajectory=False,
+        foot_sticking_sequences=foot_sticking_sequences,
     )
 
     out_npz = paths.retarget_save_dir / f"{args.seq}.npz"
