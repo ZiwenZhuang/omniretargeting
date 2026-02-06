@@ -1,8 +1,30 @@
+# Python cache files
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+# Testing cache
 .pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Type checking and linting cache
 .mypy_cache/
 .ruff_cache/
 .cache/
+
+# Build and distribution
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE and OS files
 .DS_Store
+.vscode/
+.idea/
+
+# Project specific
 CLAUDE.md
