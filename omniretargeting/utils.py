@@ -378,7 +378,7 @@ def load_smplx_trajectory(
     body_model = smplx.create(
         smplx_model_directory,
         "smplx",
-        gender=str(smplx_data["gender"]),
+        gender=str(smplx_data.get("gender", "neutral")),
         use_pca=False,
     )
 

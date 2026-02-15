@@ -671,7 +671,20 @@ class OmniRetargeter:
         # Create a simplified mesh for visualization if too complex
         if len(terrain_faces) > 10000:
             print(f"Terrain has {len(terrain_faces)} faces, simplifying for visualization...")
-            simplified_terrain = scaled_terrain.simplify_quadric_decimation(10000)
+            try:
+                simplified_terrain = scaled_terrain.simplify_quadric_decimation(10000)
+            except ValueError:
+                # Fallback for trimesh/fast_simplification version mismatch
+                # where target_count is interpreted as target_reduction
+                print("Using direct fast_simplification fallback due to trimesh error...")
+                import fast_simplification
+                vertices, faces = fast_simplification.simplify(
+                    scaled_terrain.vertices, 
+                    scaled_terrain.faces, 
+                    target_count=10000
+                )
+                simplified_terrain = trimesh.Trimesh(vertices=vertices, faces=faces)
+            
             terrain_vertices = simplified_terrain.vertices
             terrain_faces = simplified_terrain.faces
             print(f"Simplified to {len(terrain_faces)} faces")
