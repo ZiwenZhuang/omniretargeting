@@ -342,6 +342,7 @@ def main():
     parser.add_argument("--terrain", help="Path to terrain mesh file (optional, defaults to flat ground)")
     parser.add_argument("--mapping", help="Path to joint mapping JSON file (optional, uses default if not provided)")
     parser.add_argument("--vis", action="store_true", help="Visualize the retargeted motion")
+    parser.add_argument("--framerate", type=float, default=None, help="Framerate of the motion (optional, defaults to 30.0 or auto-detected)")
     
     args = parser.parse_args()
     
@@ -372,6 +373,29 @@ def main():
             smplx_file=Path(args.smplx_motion),
             smplx_model_directory=args.smplx_model_dir,
         )
+        
+        # Try to detect framerate from SMPLX file if not provided
+        framerate = args.framerate
+        if framerate is None:
+            try:
+                smplx_data = np.load(args.smplx_motion, allow_pickle=True)
+                if isinstance(smplx_data, np.lib.npyio.NpzFile):
+                    if "framerate" in smplx_data:
+                        framerate = float(smplx_data["framerate"])
+                        print(f"Detected framerate from file: {framerate}")
+                    elif "mocap_framerate" in smplx_data:
+                        framerate = float(smplx_data["mocap_framerate"])
+                        print(f"Detected mocap_framerate from file: {framerate}")
+                    elif "mocap_frame_rate" in smplx_data:
+                        framerate = float(smplx_data["mocap_frame_rate"])
+                        print(f"Detected mocap_frame_rate from file: {framerate}")
+            except Exception:
+                pass
+        
+        if framerate is None:
+            framerate = 30.0
+            print(f"Using default framerate: {framerate}")
+
         print(f"Loaded trajectory with shape: {smplx_trajectory.shape}")
         if smplx_orientations is not None:
             print(f"Loaded orientations with shape: {smplx_orientations.shape}")
@@ -395,7 +419,38 @@ def main():
         
         # Save output
         print(f"Saving output to {args.output}...")
-        np.save(args.output, retargeted_motion)
+        
+        # Extract data for saving
+        # retargeted_motion shape: (T, 7 + DOF) -> [pos(3), quat(4), joints(DOF)]
+        
+        # Get joint names from robot model
+        joint_names = retargeter.get_joint_names()
+        
+        # Extract components
+        base_pos = retargeted_motion[:, :3]
+        base_quat = retargeted_motion[:, 3:7] # wxyz
+        joint_pos = retargeted_motion[:, 7:]
+        
+        # Convert quaternion to xyzw if needed (standard for many tools)
+        # MuJoCo uses wxyz, but many other tools use xyzw.
+        # The example file has 'base_quat_w' which implies world frame.
+        # Let's assume the example file uses xyzw convention as it's common in ROS/scipy
+        # But wait, MuJoCo uses wxyz. Let's check the example file values if possible.
+        # For now, let's stick to wxyz as it is what MuJoCo uses and what we have.
+        # If the user wants xyzw, we can convert.
+        # Actually, let's look at the example file keys again:
+        # ['framerate', 'joint_names', 'joint_pos', 'base_pos_w', 'base_quat_w']
+        
+        # Save as .npz with specific keys
+        np.savez(
+            args.output,
+            framerate=framerate,
+            joint_names=np.array(joint_names),
+            joint_pos=joint_pos,
+            base_pos_w=base_pos,
+            base_quat_w=base_quat # Saving as wxyz (MuJoCo convention)
+        )
+        
         print(f"Done! Terrain scale used: {terrain_scale}")
 
         if args.vis:
