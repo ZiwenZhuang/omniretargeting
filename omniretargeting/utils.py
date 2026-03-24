@@ -40,6 +40,25 @@ def scale_mesh(mesh: trimesh.Trimesh, scale_factor: float) -> trimesh.Trimesh:
     return scaled_mesh
 
 
+def normalize_retargeted_output_path(output_path: str) -> str:
+    """
+    Normalize output filename to end with "retargeted.npz".
+
+    Examples:
+        "file" -> "file_retargeted.npz"
+        "file.npz" -> "file_retargeted.npz"
+        "my_retargeted.npz" -> "my_retargeted.npz"
+    """
+    normalized = output_path
+    if not normalized.endswith("retargeted.npz"):
+        if normalized.endswith(".npz"):
+            normalized = normalized[:-4]
+        if normalized and not normalized.endswith(("_", "-", ".")):
+            normalized = f"{normalized}_"
+        normalized = f"{normalized}retargeted.npz"
+    return normalized
+
+
 def transform_mesh(mesh: trimesh.Trimesh,
                   translation: np.ndarray,
                   rotation: Optional[np.ndarray] = None) -> trimesh.Trimesh:

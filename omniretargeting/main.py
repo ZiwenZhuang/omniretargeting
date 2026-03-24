@@ -8,7 +8,7 @@ import json
 import time
 
 from omniretargeting import OmniRetargeter
-from omniretargeting.utils import load_smplx_trajectory
+from omniretargeting.utils import load_smplx_trajectory, normalize_retargeted_output_path
 
 import contextlib
 import shutil
@@ -345,6 +345,8 @@ def main():
     parser.add_argument("--framerate", type=float, default=None, help="Framerate of the motion (optional, defaults to 30.0 or auto-detected)")
     
     args = parser.parse_args()
+
+    args.output = normalize_retargeted_output_path(args.output)
     
     # Load joint mapping
     if args.mapping:
@@ -473,4 +475,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
