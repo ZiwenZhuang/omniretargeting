@@ -2,7 +2,7 @@
 
 **Generic motion retargeting for any humanoid URDF and terrain mesh.**
 
-OmniRetargeting is a flexible motion retargeting system that can convert human motion trajectories (in SMPLX format) to any humanoid robot operating on any terrain mesh. Unlike specialized retargeting systems, OmniRetargeting automatically adapts to different robot morphologies and terrain types.
+This is a re-implementation of the [OmniRetarget](https://arxiv.org/abs/2509.26633) method. OmniRetargeting is a flexible motion retargeting system that can convert human motion trajectories (in SMPLX format) to any humanoid robot operating on any terrain mesh. Unlike specialized retargeting systems, OmniRetargeting automatically adapts to different robot morphologies and terrain types.
 
 ## Installation
 
@@ -269,8 +269,13 @@ OmniRetargeting adapts the interaction mesh retargeting approach from the holoso
 2. **Generic Robot Support**: Works with any URDF through automatic model loading and analysis
 3. **Interaction Mesh**: Creates tetrahedral mesh from human joints and terrain points
 4. **Optimization**: Uses SQP optimization with Laplacian deformation constraints
-5. **Collision Avoidance**: Implements terrain penetration constraints
+5. **Collision Avoidance**: Terrain penetration constraints (not yet implemented; see TODO below)
 6. **Joint Limits**: Respects robot joint limits during optimization
+
+## TODO / Limitations
+
+- **Penetration constraint**: The terrain penetration constraint is not yet implemented. The optimization framework has the `_compute_penetration_constraints` method and collision detection scaffolding, but they are currently disabled (`retargeting.py`, lines 520–524) because collision detection setup is incomplete. As a result, retargeted motion may exhibit foot–terrain penetration in some cases.
+- Other known TODOs: proper coordinate system alignment (`utils.py`), collision pair setup (`_setup_collision_detection` in `retargeting.py`).
 
 ## Contributing
 
@@ -288,13 +293,14 @@ This project is licensed under the Apache 2.0 License.
 
 ## Citation
 
-If you use OmniRetargeting in your research, please cite:
+This repository is a re-implementation of the OmniRetarget method. If you use this code in your research, please cite the original paper:
 
 ```
-@software{omniretargeting2024,
-  title={OmniRetargeting: Generic Motion Retargeting for Humanoid Robots},
-  author={OmniRetargeting Team},
-  year={2024},
-  url={https://github.com/your-org/omniretargeting}
+@article{yang2025omniretarget,
+  title={OmniRetarget: Interaction-Preserving Data Generation for Humanoid Whole-Body Loco-Manipulation and Scene Interaction},
+  author={Yang, Lujie and Huang, Xiaoyu and Wu, Zhen and Kanazawa, Angjoo and Abbeel, Pieter and Sferrazza, Carmelo and Liu, C. Karen and Duan, Rocky and Shi, Guanya},
+  journal={arXiv preprint arXiv:2509.26633},
+  year={2025},
+  url={https://arxiv.org/abs/2509.26633}
 }
 ```
