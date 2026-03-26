@@ -46,6 +46,8 @@ class GenericInteractionRetargeter:
         penetration_tolerance: float = 1e-3,
         foot_sticking_tolerance: float = 1e-3,
         collision_detection_threshold: float = 0.1,
+        terrain_sample_points: int = 100,
+        foot_geom_keywords: Optional[List[str]] = None,
         valid_joint_names: Optional[List[str]] = None,
     ):
         """Initialize the generic retargeter.
@@ -61,6 +63,8 @@ class GenericInteractionRetargeter:
             penetration_tolerance: Tolerance for penetration constraints
             foot_sticking_tolerance: Tolerance for foot sticking
             collision_detection_threshold: Distance threshold for collision detection
+            terrain_sample_points: Number of sampled terrain points for interaction mesh
+            foot_geom_keywords: Keywords to identify foot-related geoms for terrain contact
             valid_joint_names: Ordered list of joint names to ensure consistent ordering
         """
         self.robot_model = robot_model
@@ -93,6 +97,8 @@ class GenericInteractionRetargeter:
         self.penetration_tolerance = penetration_tolerance
         self.foot_sticking_tolerance = foot_sticking_tolerance
         self.collision_detection_threshold = collision_detection_threshold
+        self.terrain_sample_points = int(terrain_sample_points)
+        self.foot_geom_keywords = [kw.lower() for kw in (foot_geom_keywords or ["foot", "ankle", "sole"])]
 
         # Setup robot configuration
         self._setup_robot_config()
@@ -187,7 +193,7 @@ class GenericInteractionRetargeter:
     def _setup_terrain_interaction(self):
         """Setup terrain interaction parameters."""
         # Sample points on terrain for interaction mesh
-        self.terrain_points = sample_points_on_mesh(self.terrain_mesh, 100)
+        self.terrain_points = sample_points_on_mesh(self.terrain_mesh, self.terrain_sample_points)
 
         # Setup collision detection
         self.collision_pairs = self._setup_collision_detection()
@@ -206,9 +212,8 @@ class GenericInteractionRetargeter:
         collision_pairs = []
 
         # Add foot-terrain collision pairs
-        foot_keywords = ['foot', 'ankle', 'sole']
         for geom_id, geom_name in robot_geom_names:
-            if any(keyword in geom_name.lower() for keyword in foot_keywords):
+            if any(keyword in geom_name.lower() for keyword in self.foot_geom_keywords):
                 # Create virtual terrain collision
                 collision_pairs.append((geom_id, -1))  # -1 indicates terrain
 

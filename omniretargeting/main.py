@@ -8,12 +8,15 @@ import json
 import time
 
 from omniretargeting import OmniRetargeter
+from omniretargeting.robot_config import load_robot_config
 from omniretargeting.utils import load_smplx_trajectory, normalize_retargeted_output_path
 
 import contextlib
 import shutil
 import re
 import xml.etree.ElementTree as ET
+
+DEFAULT_ROBOT_CONFIG_PATH = "robot_models/json/unitree_g1.json"
 
 @contextlib.contextmanager
 def temporary_visualization_scene(urdf_path, terrain_mesh, target_faces=5000):
@@ -309,52 +312,63 @@ def create_flat_terrain(size=10.0):
     mesh.apply_translation([0, 0, -0.05])
     return mesh
 
-def get_default_joint_mapping():
-    """Return a default joint mapping for Unitree G1 robot.
-    
-    Keys are standard SMPLX joint names.
-    Values are Unitree G1 body names from the URDF.
-    """
-    return {
-        # SMPLX joint name -> Unitree G1 body name (link names from URDF)
-        "Pelvis": "pelvis",
-        "L_Hip": "left_hip_roll_link",  # Hip joints needed for proper leg tracking
-        "R_Hip": "right_hip_roll_link",
-        "Spine1": "waist_yaw_link",
-        "L_Knee": "left_knee_link",
-        "R_Knee": "right_knee_link",
-        "L_Ankle": "left_ankle_roll_link",
-        "R_Ankle": "right_ankle_roll_link",
-        "L_Shoulder": "left_shoulder_roll_link",  # Shoulder joints needed for proper arm chain
-        "R_Shoulder": "right_shoulder_roll_link",
-        "L_Elbow": "left_elbow_link",
-        "R_Elbow": "right_elbow_link",
-        "L_Wrist": "left_wrist_yaw_link",
-        "R_Wrist": "right_wrist_yaw_link",
-    }
-
 def main():
     parser = argparse.ArgumentParser(description="OmniRetargeting CLI")
-    parser.add_argument("--urdf", required=True, help="Path to robot URDF file")
+    parser.add_argument(
+        "--robot-config",
+        default=DEFAULT_ROBOT_CONFIG_PATH,
+        help=f"Path to robot configuration JSON file (default: {DEFAULT_ROBOT_CONFIG_PATH})",
+    )
     parser.add_argument("--smplx_model_dir", required=True, help="Directory containing SMPLX model files")
     parser.add_argument("--smplx_motion", required=True, help="Path to SMPLX motion file (.npz)")
     parser.add_argument("--output", required=True, help="Path to save output motion (.npy)")
     parser.add_argument("--terrain", help="Path to terrain mesh file (optional, defaults to flat ground)")
-    parser.add_argument("--mapping", help="Path to joint mapping JSON file (optional, uses default if not provided)")
+    parser.add_argument("--mapping", help="Path to joint mapping JSON file (optional, overrides robot profile mapping)")
     parser.add_argument("--vis", action="store_true", help="Visualize the retargeted motion")
     parser.add_argument("--framerate", type=float, default=None, help="Framerate of the motion (optional, defaults to 30.0 or auto-detected)")
     
     args = parser.parse_args()
 
     args.output = normalize_retargeted_output_path(args.output)
-    
+
+    # Load robot profile config (default profile path can be overridden by --robot-config).
+    robot_config = {}
+    if args.robot_config:
+        robot_config_path = Path(args.robot_config)
+        if robot_config_path.exists():
+            robot_config = load_robot_config(robot_config_path)
+            profile_name = robot_config.get("name", robot_config_path.stem)
+            print(f"Loaded robot config profile: {profile_name}")
+        elif args.robot_config == DEFAULT_ROBOT_CONFIG_PATH:
+            print(f"Default robot config not found at {DEFAULT_ROBOT_CONFIG_PATH}, continuing without profile.")
+        else:
+            raise FileNotFoundError(f"Robot config not found: {args.robot_config}")
+
     # Load joint mapping
     if args.mapping:
         with open(args.mapping, 'r') as f:
             joint_mapping = json.load(f)
+    elif "joint_mapping" in robot_config:
+        joint_mapping = robot_config["joint_mapping"]
     else:
-        print("Using default joint mapping.")
-        joint_mapping = get_default_joint_mapping()
+        raise ValueError(
+            "No joint mapping available. Provide --mapping or use a robot profile with 'joint_mapping'."
+        )
+
+    if not isinstance(joint_mapping, dict) or not joint_mapping:
+        raise ValueError("Joint mapping must be a non-empty JSON object.")
+
+    robot_urdf_path = robot_config.get("urdf_path")
+    if not robot_urdf_path:
+        raise ValueError(
+            "Robot URDF is required. Set 'urdf_path' in the robot profile JSON (--robot-config)."
+        )
+
+    robot_height = robot_config.get("robot_height")
+    smplx_joint_names = robot_config.get("smplx_joint_names")
+    height_estimation = robot_config.get("height_estimation")
+    base_orientation = robot_config.get("base_orientation")
+    retargeting = robot_config.get("retargeting")
 
     # Handle terrain
     temp_terrain_path = None
@@ -407,9 +421,14 @@ def main():
         # Initialize Retargeter
         print("Initializing OmniRetargeter...")
         retargeter = OmniRetargeter(
-            robot_urdf_path=args.urdf,
+            robot_urdf_path=robot_urdf_path,
             terrain_mesh_path=terrain_path,
             joint_mapping=joint_mapping,
+            robot_height=robot_height,
+            smplx_joint_names=smplx_joint_names,
+            height_estimation=height_estimation,
+            base_orientation=base_orientation,
+            retargeting=retargeting,
         )
 
         # Perform retargeting
@@ -466,7 +485,7 @@ def main():
                 except Exception as e:
                     print(f"Could not load terrain for visualization: {e}")
             
-            visualize_trajectory(args.urdf, retargeted_motion, smplx_trajectory * terrain_scale, terrain_mesh=vis_terrain)
+            visualize_trajectory(robot_urdf_path, retargeted_motion, smplx_trajectory * terrain_scale, terrain_mesh=vis_terrain)
 
     finally:
         # Cleanup temp file

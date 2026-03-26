@@ -30,6 +30,9 @@ class OmniRetargeter:
         joint_mapping: Dict[str, str],
         robot_height: Optional[float] = None,
         smplx_joint_names: Optional[List[str]] = None,
+        height_estimation: Optional[Dict[str, Any]] = None,
+        base_orientation: Optional[Dict[str, str]] = None,
+        retargeting: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize the OmniRetargeter.
@@ -40,6 +43,9 @@ class OmniRetargeter:
             joint_mapping: Dictionary mapping SMPLX joint names to robot link names
             robot_height: Height of the robot in meters (auto-detected if None)
             smplx_joint_names: List of SMPLX joint names in order (required for proper joint mapping)
+            height_estimation: Optional settings for human height estimation from SMPLX joints
+            base_orientation: Optional joint names used for base orientation estimation
+            retargeting: Optional solver/retargeting settings forwarded to interaction retargeter
         """
         self.robot_urdf_path = Path(robot_urdf_path)
         self.terrain_mesh_path = Path(terrain_mesh_path)
@@ -56,6 +62,11 @@ class OmniRetargeter:
             ]
         else:
             self.smplx_joint_names = smplx_joint_names
+
+        # Optional per-robot configuration with safe defaults.
+        self.height_estimation_config = dict(height_estimation or {})
+        self.base_orientation_config = dict(base_orientation or {})
+        self.retargeting_config = dict(retargeting or {})
 
         # Create mapping from SMPLX joint names to indices
         self.smplx_joint_indices = {}
@@ -281,11 +292,21 @@ class OmniRetargeter:
             
             # Find the frame where the person is most upright (max head height)
             # Assuming Z is up
-            head_idx = 15 # Head
-            foot_indices = [10, 11] # Left/Right ankle
+            head_joint_name = self.height_estimation_config.get("head_joint", "Head")
+            foot_joint_names = self.height_estimation_config.get("foot_joints", ["L_Foot", "R_Foot"])
+            head_top_offset = float(self.height_estimation_config.get("head_top_offset", 0.12))
+
+            head_idx = self.smplx_joint_indices.get(head_joint_name, 15)
+            foot_indices = [
+                self.smplx_joint_indices[name]
+                for name in foot_joint_names
+                if name in self.smplx_joint_indices
+            ]
+            if not foot_indices:
+                foot_indices = [10, 11]  # fallback defaults
             
             # Check if we have enough joints
-            if smplx_trajectory.shape[1] > 15:
+            if smplx_trajectory.shape[1] > head_idx and all(idx < smplx_trajectory.shape[1] for idx in foot_indices):
                 # Calculate height per frame: Head Z - Average Foot Z
                 head_z = smplx_trajectory[:, head_idx, 2]
                 
@@ -298,8 +319,7 @@ class OmniRetargeter:
                 # Use the maximum height observed (standing pose)
                 # Add offset for top of head (head joint is in neck/center of head)
                 # Approx 10-15cm from head joint to top of head
-                HEAD_TOP_OFFSET = 0.12
-                estimated_human_height = np.max(heights) + HEAD_TOP_OFFSET
+                estimated_human_height = np.max(heights) + head_top_offset
                 
                 # Sanity check: Constrain to reasonable human range [1.4, 2.2]
                 estimated_human_height = np.clip(estimated_human_height, 1.4, 2.2)
@@ -366,7 +386,9 @@ class OmniRetargeter:
             scaled_terrain,
             self.valid_joint_mapping,  # Use filtered mapping, not full joint_mapping
             self.robot_height,
-            collision_detection_threshold=0.1,
+            collision_detection_threshold=float(self.retargeting_config.get("collision_detection_threshold", 0.1)),
+            terrain_sample_points=int(self.retargeting_config.get("terrain_sample_points", 100)),
+            foot_geom_keywords=list(self.retargeting_config.get("foot_geom_keywords", ["foot", "ankle", "sole"])),
             valid_joint_names=self.valid_joint_names,  # CRITICAL: Pass ordered joint names for consistency
         )
 
@@ -528,10 +550,24 @@ class OmniRetargeter:
         if joints.shape[0] < 4:
             return None
 
-        pelvis = joints[0]
-        left_hip = joints[1]
-        right_hip = joints[2]
-        spine1 = joints[3]
+        pelvis_name = self.base_orientation_config.get("pelvis", "Pelvis")
+        left_hip_name = self.base_orientation_config.get("left_hip", "L_Hip")
+        right_hip_name = self.base_orientation_config.get("right_hip", "R_Hip")
+        spine_name = self.base_orientation_config.get("spine", "Spine1")
+
+        pelvis_idx = self.smplx_joint_indices.get(pelvis_name, 0)
+        left_hip_idx = self.smplx_joint_indices.get(left_hip_name, 1)
+        right_hip_idx = self.smplx_joint_indices.get(right_hip_name, 2)
+        spine_idx = self.smplx_joint_indices.get(spine_name, 3)
+
+        max_required_idx = max(pelvis_idx, left_hip_idx, right_hip_idx, spine_idx)
+        if joints.shape[0] <= max_required_idx:
+            return None
+
+        pelvis = joints[pelvis_idx]
+        left_hip = joints[left_hip_idx]
+        right_hip = joints[right_hip_idx]
+        spine1 = joints[spine_idx]
 
         up = spine1 - pelvis
         right = right_hip - left_hip

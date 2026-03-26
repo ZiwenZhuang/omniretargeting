@@ -104,7 +104,9 @@ class TestOmniRetargeter:
         mock_mujoco.MjData.return_value = mock_data
         mock_mujoco.mj_resetData = Mock()
         mock_mujoco.mj_forward = Mock()
-        mock_mujoco.mj_id2name = Mock(return_value="test_body")
+        body_names = ["world", "torso_link", "left_hip_yaw_link", "left_hip_link", "right_hip_link"]
+        mock_mujoco.mjtObj.mjOBJ_BODY = 1
+        mock_mujoco.mj_id2name.side_effect = lambda model, obj_type, i: body_names[i]
 
         mock_mesh = Mock()
         mock_trimesh.load.return_value = mock_mesh
@@ -142,7 +144,9 @@ class TestOmniRetargeter:
             mock_mujoco.MjData.return_value = Mock()
             mock_mujoco.mj_resetData = Mock()
             mock_mujoco.mj_forward = Mock()
-            mock_mujoco.mj_id2name = Mock(return_value="test_body")
+            body_names = ["world", "torso_link", "left_hip_yaw_link", "left_hip_link", "right_hip_link"]
+            mock_mujoco.mjtObj.mjOBJ_BODY = 1
+            mock_mujoco.mj_id2name.side_effect = lambda model, obj_type, i: body_names[i]
 
             # Use correct SMPLX joint names
             joint_mapping = {"Pelvis": "torso_link", "L_Hip": "left_hip_yaw_link"}
