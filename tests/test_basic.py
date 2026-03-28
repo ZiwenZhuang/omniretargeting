@@ -1,12 +1,56 @@
 """Basic tests for omniretargeting package."""
 
+import os
 import numpy as np
 import pytest
 from pathlib import Path
 from unittest.mock import Mock, patch
 from scipy.spatial.transform import Rotation
 
+from omniretargeting.robot_config import load_robot_config
 from omniretargeting.utils import validate_smplx_trajectory, compute_world_joint_orientations
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+TEST_RESOURCES = REPO_ROOT / "tests" / "resources"
+AMASS_STAGEII_FIXTURE = TEST_RESOURCES / "amass" / "140_02_stageii.npz"
+TERRAIN_FIXTURE = TEST_RESOURCES / "terrain" / "simplelab_enlarged_noWall.stl"
+SMPLX_MODEL_DIR = Path("/localhdd/Datasets/")
+ROBOT_PROFILE_CASES = (
+    pytest.param("unitree_g1", REPO_ROOT / "robot_models" / "unitree_g1" / "unitree_g1.json", id="g1"),
+    pytest.param("unitree_h1", REPO_ROOT / "robot_models" / "unitree_h1" / "unitree_h1.json", id="h1"),
+)
+COMMON_ALIGNMENT_JOINTS = (
+    "Pelvis",
+    "L_Hip",
+    "R_Hip",
+    "Spine1",
+    "L_Knee",
+    "R_Knee",
+    "L_Ankle",
+    "R_Ankle",
+    "L_Shoulder",
+    "R_Shoulder",
+    "L_Elbow",
+    "R_Elbow",
+)
+
+
+def _load_robot_profile(profile_path: Path) -> dict:
+    return load_robot_config(profile_path)
+
+
+def _build_retargeter_kwargs(robot_config: dict, terrain_mesh_path: Path | str, joint_mapping: dict | None = None) -> dict:
+    return {
+        "robot_urdf_path": Path(robot_config["urdf_path"]),
+        "terrain_mesh_path": terrain_mesh_path,
+        "joint_mapping": dict(joint_mapping or robot_config["joint_mapping"]),
+        "robot_height": robot_config.get("robot_height"),
+        "smplx_joint_names": robot_config.get("smplx_joint_names"),
+        "height_estimation": robot_config.get("height_estimation"),
+        "base_orientation": robot_config.get("base_orientation"),
+        "retargeting": robot_config.get("retargeting"),
+    }
 
 
 class TestUtils:
@@ -184,50 +228,40 @@ class TestPackageImport:
 class TestRealDataIntegration:
     """Integration tests requiring real data files."""
 
-    def test_full_pipeline_with_real_data(self):
+    @pytest.mark.parametrize(("robot_name", "profile_path"), ROBOT_PROFILE_CASES)
+    def test_full_pipeline_with_real_data(self, robot_name: str, profile_path: Path):
         """
-        Test the full retargeting pipeline with actual files.
-        
-        NOTE: You must provide valid paths below for this test to run.
+        Test the full retargeting pipeline with repository fixtures.
         """
         from omniretargeting import OmniRetargeter
         from omniretargeting.utils import load_smplx_trajectory
-        import os
 
-        # ==========================================
-        # TODO: Set these paths to your real data
-        # ==========================================
-        robot_urdf_path = "/home/leo/NutstoreFiles/2Projects/isaacSim/instinctlab/source/instinctlab/instinctlab/assets/resources/unitree_g1/g1_29dof.urdf"
-        terrain_mesh_path = "/localhdd/Datasets/NoKov-Marslab-Motions-instinctnpz/20251116_50cm_kneeClimbStep1/20251106_diveroll4_simpleLab_noWall/simplelab_enlarged_noWall.stl"
-        
-        # For SMPLX-NG files (raw .npz with poses/trans/betas)
-        trajectory_path = "/localhdd/Datasets/AMASS_SMPLX-NG/CMU/140/140_08_stageii.npz"
-        smplx_model_path = "/localhdd/Datasets"  # Directory containing SMPLX model files
-        
-        # OR for pre-processed files (.npy or .npz with global_joint_positions)
-        # trajectory_path = "path/to/preprocessed_trajectory.npy"
-        # smplx_model_path = None  # Not needed for preprocessed data
-        # ==========================================
+        robot_config = _load_robot_profile(profile_path)
+        robot_urdf_path = Path(robot_config["urdf_path"])
+        terrain_mesh_path = TERRAIN_FIXTURE
+        trajectory_path = AMASS_STAGEII_FIXTURE
 
-        # Skip test if files are not configured
-        if not os.path.exists(robot_urdf_path):
+        if not robot_urdf_path.exists():
             pytest.skip(f"Robot URDF not found at: {robot_urdf_path}")
-        
-        if not os.path.exists(terrain_mesh_path):
+
+        if not terrain_mesh_path.exists():
             pytest.skip(f"Terrain mesh not found at: {terrain_mesh_path}")
 
-        if not os.path.exists(trajectory_path):
+        if not trajectory_path.exists():
             pytest.skip(f"Trajectory file not found at: {trajectory_path}")
+
+        if not SMPLX_MODEL_DIR.exists():
+            pytest.skip(f"SMPLX model directory not found at: {SMPLX_MODEL_DIR}")
 
         # Load trajectory
         # For SMPLX-NG files (stageii.npz), this will automatically:
         # 1. Load the raw SMPLX parameters (poses, trans, betas)
         # 2. Run forward kinematics using SMPLX model
         # 3. Return joint positions (T, 22, 3) and orientations (T, 22, 4)
-        print(f"Loading trajectory from {trajectory_path}...")
+        print(f"Loading trajectory for {robot_name} from {trajectory_path}...")
         smplx_trajectory, smplx_orientations = load_smplx_trajectory(
-            Path(trajectory_path),
-            smplx_model_directory=smplx_model_path,  # Required for raw SMPLX-NG files
+            trajectory_path,
+            smplx_model_directory=str(SMPLX_MODEL_DIR),
             gender="neutral",  # Will be overridden if gender is in the file
         )
         
@@ -237,30 +271,9 @@ class TestRealDataIntegration:
         else:
             print("Warning: Orientations not available")
 
-        # Define joint mapping 
-        # (Adjust this to match your specific robot's joint names)
-        joint_mapping = {
-            "Pelvis": "torso_link",
-            "L_Hip": "left_hip_yaw_link",
-            "R_Hip": "right_hip_yaw_link",
-            "Spine1": "waist_yaw_link",
-            "L_Knee": "left_knee_link",
-            "R_Knee": "right_knee_link",
-            "L_Ankle": "left_ankle_roll_link",
-            "R_Ankle": "right_ankle_roll_link",
-            "L_Shoulder": "left_shoulder_pitch_link",
-            "R_Shoulder": "right_shoulder_pitch_link",
-            "L_Elbow": "left_elbow_link",
-            "R_Elbow": "right_elbow_link",
-        }
-
-        print("Initializing OmniRetargeter...")
-        retargeter = OmniRetargeter(
-            robot_urdf_path=robot_urdf_path,
-            terrain_mesh_path=terrain_mesh_path,
-            joint_mapping=joint_mapping,
-            robot_height=1.6 # Optional: override auto-detected height
-        )
+        print(f"Initializing OmniRetargeter for {robot_name}...")
+        retargeter = OmniRetargeter(**_build_retargeter_kwargs(robot_config, terrain_mesh_path))
+        assert sorted(retargeter.validate_joint_mapping()) == []
 
         print("Running retargeting...")
         terrain_scale, retargeted_motion = retargeter.retarget_motion(smplx_trajectory)
@@ -280,7 +293,8 @@ class TestRealDataIntegration:
         print("Test passed!")
 
 
-def test_tpose_retargeting_alignment():
+@pytest.mark.parametrize(("robot_name", "profile_path"), ROBOT_PROFILE_CASES)
+def test_tpose_retargeting_alignment(robot_name: str, profile_path: Path):
     """
     End-to-end test: Create a T-pose SMPLX trajectory and verify retargeting accuracy.
     
@@ -291,7 +305,6 @@ def test_tpose_retargeting_alignment():
     4. Passes only if mean distance < 0.3m across all mapped joints
     """
     from omniretargeting import OmniRetargeter
-    import os
     import trimesh
     import tempfile
 
@@ -335,10 +348,10 @@ def test_tpose_retargeting_alignment():
     # ==========================================
     # Setup test environment
     # ==========================================
-    robot_urdf_path = "/home/leo/NutstoreFiles/2Projects/isaacSim/instinctlab/source/instinctlab/instinctlab/assets/resources/unitree_g1/urdf/g1_29dof_popsicle.urdf"
-    
-    # Skip test if robot URDF not available
-    if not os.path.exists(robot_urdf_path):
+    robot_config = _load_robot_profile(profile_path)
+    robot_urdf_path = Path(robot_config["urdf_path"])
+
+    if not robot_urdf_path.exists():
         pytest.skip(f"Robot URDF not found at: {robot_urdf_path}")
     
     # Create a simple flat terrain mesh
@@ -351,35 +364,21 @@ def test_tpose_retargeting_alignment():
         terrain_mesh.export(terrain_path)
     
     try:
-        # Define joint mapping (SMPLX -> Robot)
-        # Using Unitree G1 body names from URDF (with _link suffix)
         joint_mapping = {
-            "Pelvis": "pelvis",
-            "L_Hip": "left_hip_yaw_link",
-            "R_Hip": "right_hip_roll_link",
-            "L_Knee": "left_knee_link",
-            "R_Knee": "right_knee_link",
-            "L_Ankle": "left_ankle_roll_link",
-            "R_Ankle": "right_ankle_roll_link",
-            "L_Shoulder": "left_shoulder_pitch_link",
-            "R_Shoulder": "right_shoulder_pitch_link",
-            "L_Elbow": "left_elbow_link",
-            "R_Elbow": "right_elbow_link",
+            joint_name: robot_config["joint_mapping"][joint_name]
+            for joint_name in COMMON_ALIGNMENT_JOINTS
+            if joint_name in robot_config["joint_mapping"]
         }
         
         # ==========================================
         # Run retargeting
         # ==========================================
         print("\n" + "="*60)
-        print("T-Pose Retargeting Test")
+        print(f"T-Pose Retargeting Test ({robot_name})")
         print("="*60)
         
-        retargeter = OmniRetargeter(
-            robot_urdf_path=robot_urdf_path,
-            terrain_mesh_path=terrain_path,
-            joint_mapping=joint_mapping,
-            robot_height=1.6  # Approximate human height
-        )
+        retargeter = OmniRetargeter(**_build_retargeter_kwargs(robot_config, terrain_path, joint_mapping))
+        assert sorted(retargeter.validate_joint_mapping()) == []
         
         print(f"Input SMPLX trajectory shape: {smplx_trajectory.shape}")
         print(f"Mapped joints: {len(retargeter.mapped_joint_indices)}")

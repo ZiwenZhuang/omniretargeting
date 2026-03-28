@@ -196,18 +196,18 @@ retargeter = OmniRetargeter(
 
 ### Robot Profile Config (Per-Humanoid)
 
-You can keep one JSON profile per humanoid robot (for example under `robot_models/json/`) and feed it to the CLI:
+You can keep one JSON profile per humanoid robot (for example under `robot_models/<robot_name>/`) and feed it to the CLI:
 
 ```bash
 python -m omniretargeting.main \
-  --robot-config robot_models/json/unitree_g1.json \
+  --robot-config robot_models/unitree_g1/unitree_g1.json \
   --smplx_model_dir /path/to/smplx/models \
   --smplx_motion /path/to/motion.npz \
   --terrain /path/to/terrain.obj \
   --output /path/to/output.npz
 ```
 
-`--robot-config` defaults to `robot_models/json/unitree_g1.json`. The robot URDF path must be set as `urdf_path` in that JSON profile (the CLI does not accept a separate URDF argument).
+`--robot-config` defaults to `robot_models/unitree_g1/unitree_g1.json`. The robot URDF path must be set as `urdf_path` in that JSON profile (the CLI does not accept a separate URDF argument).
 
 Profile fields can include:
 - `joint_mapping`

@@ -16,7 +16,7 @@ import shutil
 import re
 import xml.etree.ElementTree as ET
 
-DEFAULT_ROBOT_CONFIG_PATH = "robot_models/json/unitree_g1.json"
+DEFAULT_ROBOT_CONFIG_PATH = "robot_models/unitree_g1/unitree_g1.json"
 
 @contextlib.contextmanager
 def temporary_visualization_scene(urdf_path, terrain_mesh, target_faces=5000):

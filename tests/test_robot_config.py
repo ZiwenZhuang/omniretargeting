@@ -6,6 +6,13 @@ import pytest
 from omniretargeting.robot_config import load_robot_config
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+ROBOT_PROFILE_CASES = (
+    pytest.param(REPO_ROOT / "robot_models" / "unitree_g1" / "unitree_g1.json", id="g1"),
+    pytest.param(REPO_ROOT / "robot_models" / "unitree_h1" / "unitree_h1.json", id="h1"),
+)
+
+
 def test_load_robot_config_resolves_relative_urdf(tmp_path: Path):
     config_path = tmp_path / "robot.json"
     rel_urdf = "robots/test.urdf"
@@ -38,3 +45,22 @@ def test_load_robot_config_requires_object(tmp_path: Path):
 
     with pytest.raises(ValueError, match="JSON object"):
         load_robot_config(config_path)
+
+
+@pytest.mark.parametrize("profile_path", ROBOT_PROFILE_CASES)
+def test_bundled_robot_profiles_match_urdf_bodies(profile_path: Path):
+    mujoco = pytest.importorskip("mujoco")
+
+    loaded = load_robot_config(profile_path)
+    urdf_path = Path(loaded["urdf_path"])
+
+    assert urdf_path.exists()
+
+    model = mujoco.MjModel.from_xml_path(str(urdf_path))
+    body_names = {
+        mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_idx)
+        for body_idx in range(model.nbody)
+    }
+    missing = sorted(set(loaded["joint_mapping"].values()) - body_names)
+
+    assert missing == []

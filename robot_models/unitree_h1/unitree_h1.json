@@ -1,21 +1,19 @@
 {
-  "name": "unitree_g1",
-  "urdf_path": "../urdf/g1_29dof_popsicle.urdf",
+  "name": "unitree_h1",
+  "urdf_path": "h1.urdf",
   "joint_mapping": {
     "Pelvis": "pelvis",
     "L_Hip": "left_hip_roll_link",
     "R_Hip": "right_hip_roll_link",
-    "Spine1": "waist_yaw_link",
+    "Spine1": "torso_link",
     "L_Knee": "left_knee_link",
     "R_Knee": "right_knee_link",
-    "L_Ankle": "left_ankle_roll_link",
-    "R_Ankle": "right_ankle_roll_link",
+    "L_Ankle": "left_ankle_link",
+    "R_Ankle": "right_ankle_link",
     "L_Shoulder": "left_shoulder_roll_link",
     "R_Shoulder": "right_shoulder_roll_link",
     "L_Elbow": "left_elbow_link",
-    "R_Elbow": "right_elbow_link",
-    "L_Wrist": "left_wrist_yaw_link",
-    "R_Wrist": "right_wrist_yaw_link"
+    "R_Elbow": "right_elbow_link"
   },
   "height_estimation": {
     "head_joint": "Head",
@@ -30,7 +28,7 @@
   },
   "retargeting": {
     "collision_detection_threshold": 0.1,
-    "terrain_sample_points": 100,
+    "terrain_sample_points": 120,
     "foot_geom_keywords": ["foot", "ankle", "sole"]
   }
 }
