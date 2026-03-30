@@ -522,11 +522,9 @@ class GenericInteractionRetargeter:
             dqa <= (self.q_a_ub - q_a_current),
         ])
 
-        # Terrain penetration constraints
-        # DISABLED: Penetration constraints are not working correctly yet
-        # TODO: Re-enable after fixing collision detection
-        # penetration_constraints = self._compute_penetration_constraints(q, dqa)
-        # constraints.extend(penetration_constraints)
+        # Non-penetration constraints (self-collision + terrain)
+        penetration_constraints = self._compute_penetration_constraints(q, dqa)
+        constraints.extend(penetration_constraints)
 
         # Trust region
         constraints.append(cp.SOC(self.step_size, dqa))
@@ -921,67 +919,147 @@ class GenericInteractionRetargeter:
 
     def _compute_penetration_constraints(self, q: np.ndarray, dqa: cp.Variable) -> List[cp.Constraint]:
         """
-        Compute penetration constraints using MuJoCo collision detection.
-        
-        This method uses MuJoCo's collision detection to find geometry pairs that are
-        close to contact, then computes signed distance and contact Jacobians for each pair.
+        Compute penetration constraints for robot-robot and robot-terrain contacts.
+
+        Two sources of constraints are combined:
+        1. **Self-collision** – MuJoCo's built-in collision detection finds pairs of
+           robot geoms that are close to each other and builds linearised
+           non-penetration constraints via contact Jacobians.
+        2. **Terrain penetration** – for every robot geom whose centre is within
+           ``collision_detection_threshold`` of the terrain mesh surface (measured
+           via ``trimesh.proximity.closest_point``), a unilateral constraint is
+           added that pushes the geom upward (in the terrain-surface-normal
+           direction) to avoid terrain penetration.
+
+        The terrain mesh is NOT embedded in the MuJoCo model, so MuJoCo's own
+        collision pipeline cannot detect robot-terrain contacts.  We handle them
+        analytically using the trimesh proximity query and the robot's
+        translational Jacobian.
         """
         constraints = []
 
-        # Update robot state (should already be done, but ensure it's current)
+        # Ensure kinematics are current
         self.robot_data.qpos[:] = q
         mujoco.mj_forward(self.robot_model, self.robot_data)
 
         m, d = self.robot_model, self.robot_data
         threshold = float(self.collision_detection_threshold)
 
-        # 1) Fast prefilter via mj_collision
+        # ------------------------------------------------------------------
+        # 1) Robot self-collision constraints (via MuJoCo collision)
+        # ------------------------------------------------------------------
         candidates = self._prefilter_pairs_with_mj_collision(threshold)
-
-        # 2) Compute precise distance and Jacobians for each candidate
         fromto = np.zeros(6, dtype=float)
         contype, conaff = m.geom_contype, m.geom_conaffinity
 
-        def masks_ok(g1, g2):
-            """Check if this geometry pair should be considered for collision."""
-            # Skip if both geometries have no collision masks
-            if contype[g1] == 0 and conaff[g1] == 0:
-                return False
-            if contype[g2] == 0 and conaff[g2] == 0:
-                return False
-            
-            # For now, accept all valid collision pairs
-            # You can add custom filtering logic here (e.g., skip certain object-ground pairs)
-            return True
-
         for g1, g2 in candidates:
-            if not masks_ok(g1, g2):
+            # Skip geoms with no collision masks
+            if contype[g1] == 0 and conaff[g1] == 0:
+                continue
+            if contype[g2] == 0 and conaff[g2] == 0:
                 continue
 
             fromto[:] = 0.0
             dist = mujoco.mj_geomDistance(m, d, g1, g2, threshold, fromto)
-            
             if dist <= threshold:
-                # Compute relative contact Jacobian
                 J_rel = self._compute_jacobian_for_contact_relative(
                     g1, g2, self._geom_names[g1], self._geom_names[g2], fromto, dist
                 )
-                
-                # Extract optimized part
-                # J_rel has shape (nq,), indices match qpos coordinates
-                valid_indices = self.q_a_indices[self.q_a_indices < J_rel.shape[0]]
-
-                J_rel_actuated = J_rel[valid_indices]
-                
-                # Pad if needed
-                if len(J_rel_actuated) < self.nq_a:
-                    J_pad = np.zeros(self.nq_a)
-                    J_pad[:len(J_rel_actuated)] = J_rel_actuated
-                    J_rel_actuated = J_pad
-                
-                # Add non-penetration constraint: J @ dqa >= -dist - tolerance
+                Ja = J_rel[self.q_a_indices]
                 rhs = -dist - self.penetration_tolerance
-                constraints.append(J_rel_actuated @ dqa >= rhs)
+                constraints.append(Ja @ dqa >= rhs)
+
+        # ------------------------------------------------------------------
+        # 2) Robot-terrain penetration constraints (via trimesh proximity)
+        # ------------------------------------------------------------------
+        constraints.extend(
+            self._compute_terrain_penetration_constraints(q, dqa, threshold)
+        )
+
+        return constraints
+
+    def _compute_terrain_penetration_constraints(
+        self, q: np.ndarray, dqa: cp.Variable, threshold: float
+    ) -> List[cp.Constraint]:
+        """
+        Compute non-penetration constraints between robot geoms and the
+        terrain trimesh.
+
+        For each robot collision geom whose world-frame position is within
+        *threshold* of the terrain surface, we add the linear constraint:
+
+            n^T J_a  dqa  >=  -(d - tol)
+
+        where
+        - d   is the signed distance (positive = above terrain),
+        - n   is the outward terrain surface normal at the closest point,
+        - J_a is the translational Jacobian of the geom's body (columns for
+          the actuated DOFs only),
+        - tol is ``self.penetration_tolerance``.
+        """
+        import trimesh as _trimesh
+
+        constraints: list = []
+        m, d = self.robot_model, self.robot_data
+
+        # Collect world-frame positions of every collision geom
+        # (type 7 = mesh visual geoms are skipped; we keep capsule/sphere/box)
+        geom_positions = []
+        geom_indices = []
+        for gi in range(m.ngeom):
+            # Skip purely visual geoms (type 7 = mesh with no collision)
+            if m.geom_contype[gi] == 0 and m.geom_conaffinity[gi] == 0:
+                continue
+            pos = d.geom_xpos[gi].copy()
+            geom_positions.append(pos)
+            geom_indices.append(gi)
+
+        if len(geom_positions) == 0:
+            return constraints
+
+        geom_positions = np.array(geom_positions)  # (N, 3)
+
+        # Query terrain mesh for closest points
+        closest_pts, dists, tri_ids = _trimesh.proximity.closest_point(
+            self.terrain_mesh, geom_positions
+        )
+
+        for k, gi in enumerate(geom_indices):
+            if dists[k] > threshold:
+                continue
+
+            # Signed distance: positive when above terrain.
+            # closest_pts[k] is on the surface; geom_positions[k] is the
+            # geom centre.  We define "above" as the direction of the face
+            # normal.
+            surface_pt = closest_pts[k]
+            geom_pt = geom_positions[k]
+
+            # Face normal from terrain mesh
+            face_normal = self.terrain_mesh.face_normals[tri_ids[k]]
+            # Ensure normal points "outward" (upward for typical terrains)
+            if face_normal[2] < 0:
+                face_normal = -face_normal
+
+            # Signed distance along the normal
+            signed_dist = np.dot(geom_pt - surface_pt, face_normal)
+
+            # Only constrain geoms that are close to or below the surface
+            if signed_dist > threshold:
+                continue
+
+            # Translational Jacobian for this geom's body at the geom position
+            body_id = m.geom_bodyid[gi]
+            J_full = self._calc_contact_jacobian_from_point(
+                body_id, geom_pt, input_world=True
+            )
+            # Project onto terrain normal -> 1-D Jacobian
+            J_n = face_normal @ J_full  # (nq,)
+            Ja = J_n[self.q_a_indices]
+
+            # Constraint: J_a @ dqa >= -(signed_dist - tolerance)
+            rhs = -signed_dist - self.penetration_tolerance
+            constraints.append(Ja @ dqa >= rhs)
 
         return constraints
 
