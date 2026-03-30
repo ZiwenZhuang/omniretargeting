@@ -177,6 +177,62 @@ def temporary_visualization_scene(urdf_path, terrain_mesh, target_faces=5000):
                 except OSError:
                     pass
 
+def save_trajectory_video(urdf_path, trajectory, output_path, smplx_trajectory=None, terrain_mesh=None, fps=30, width=640, height=480):
+    """Render the retargeted trajectory to a video file using MuJoCo offscreen renderer.
+
+    Requires MUJOCO_GL=egl (or osmesa) for headless rendering.
+    Requires imageio[ffmpeg]: pip install imageio[ffmpeg]
+    """
+    import mujoco
+    try:
+        import imageio
+    except ImportError:
+        print("Error: imageio not found. Install with: pip install imageio[ffmpeg]")
+        return
+
+    print(f"Saving video to {output_path} ({len(trajectory)} frames @ {fps} fps)...")
+
+    with temporary_visualization_scene(urdf_path, terrain_mesh) as model_path:
+        try:
+            model = mujoco.MjModel.from_xml_path(model_path)
+        except Exception as e:
+            print(f"Failed to load model from {model_path}: {e}")
+            if model_path != str(urdf_path):
+                print("Falling back to original URDF...")
+                model = mujoco.MjModel.from_xml_path(str(urdf_path))
+            else:
+                return
+
+        data = mujoco.MjData(model)
+        renderer = mujoco.Renderer(model, height, width)
+
+        cam = mujoco.MjvCamera()
+        cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+        cam.distance = 5.0
+        cam.azimuth = 120.0
+        cam.elevation = -20.0
+        cam.lookat[:] = [0.0, 1.0, 0.4]
+
+        num_frames = len(trajectory)
+        try:
+            with imageio.get_writer(output_path, fps=int(fps), codec="libx264",
+                                    quality=8, macro_block_size=1) as writer:
+                for i in range(num_frames):
+                    data.qpos[:] = trajectory[i]
+                    mujoco.mj_forward(model, data)
+                    renderer.update_scene(data, camera=cam)
+                    frame = renderer.render()
+                    writer.append_data(frame)
+                    if (i + 1) % 100 == 0:
+                        print(f"  {i+1}/{num_frames}")
+
+            size_mb = os.path.getsize(output_path) / 1024 / 1024
+            print(f"Video saved: {output_path} ({size_mb:.1f} MB)")
+        finally:
+            renderer.close()
+
+
+
 def visualize_trajectory(urdf_path, trajectory, smplx_trajectory=None, terrain_mesh=None):
     """Visualize the retargeted trajectory and optional SMPLX joints in MuJoCo viewer."""
     try:
@@ -325,6 +381,7 @@ def main():
     parser.add_argument("--terrain", help="Path to terrain mesh file (optional, defaults to flat ground)")
     parser.add_argument("--mapping", help="Path to joint mapping JSON file (optional, overrides robot profile mapping)")
     parser.add_argument("--vis", action="store_true", help="Visualize the retargeted motion")
+    parser.add_argument("--save-video", dest="save_video", default=None, help="Save retargeted motion video to file (e.g. /tmp/out.mp4). Uses offscreen rendering (set MUJOCO_GL=egl for headless).")
     parser.add_argument("--framerate", type=float, default=None, help="Framerate of the motion (optional, defaults to 30.0 or auto-detected)")
     
     args = parser.parse_args()
@@ -474,17 +531,23 @@ def main():
         
         print(f"Done! Terrain scale used: {terrain_scale}")
 
+        # Load terrain for visualization/video if needed
+        vis_terrain = None
+        if (args.vis or args.save_video) and terrain_path and os.path.exists(terrain_path):
+            try:
+                vis_terrain = trimesh.load(terrain_path, force='mesh')
+                vis_terrain.apply_scale(terrain_scale)
+            except Exception as e:
+                print(f"Could not load terrain for visualization: {e}")
+
+        if args.save_video:
+            save_trajectory_video(
+                robot_urdf_path, retargeted_motion, args.save_video,
+                smplx_trajectory=smplx_trajectory * terrain_scale,
+                terrain_mesh=vis_terrain, fps=framerate,
+            )
+
         if args.vis:
-            # Load terrain for visualization
-            vis_terrain = None
-            if terrain_path and os.path.exists(terrain_path):
-                try:
-                    # Force loading as mesh (not scene)
-                    vis_terrain = trimesh.load(terrain_path, force='mesh')
-                    vis_terrain.apply_scale(terrain_scale)
-                except Exception as e:
-                    print(f"Could not load terrain for visualization: {e}")
-            
             visualize_trajectory(robot_urdf_path, retargeted_motion, smplx_trajectory * terrain_scale, terrain_mesh=vis_terrain)
 
     finally:
