@@ -49,9 +49,10 @@ class GenericInteractionRetargeter:
         terrain_sample_points: int = 100,
         foot_geom_keywords: Optional[List[str]] = None,
         valid_joint_names: Optional[List[str]] = None,
+        replace_cylinders_with_capsules: bool = False,
     ):
         """Initialize the generic retargeter.
-        
+
         Args:
             robot_model: MuJoCo model of the robot
             robot_data: MuJoCo data for the robot
@@ -66,6 +67,11 @@ class GenericInteractionRetargeter:
             terrain_sample_points: Number of sampled terrain points for interaction mesh
             foot_geom_keywords: Keywords to identify foot-related geoms for terrain contact
             valid_joint_names: Ordered list of joint names to ensure consistent ordering
+            replace_cylinders_with_capsules: If True, replace all cylinder collision geoms
+                with capsules before computing penetration constraints. This matches
+                IsaacLab/PhysX convention where ``replace_cylinders_with_capsules=True``
+                is commonly used, ensuring that the retargeted motion is checked against
+                the same collision shapes used in downstream simulation.
         """
         self.robot_model = robot_model
         self.robot_data = robot_data
@@ -100,11 +106,37 @@ class GenericInteractionRetargeter:
         self.terrain_sample_points = int(terrain_sample_points)
         self.foot_geom_keywords = [kw.lower() for kw in (foot_geom_keywords or ["foot", "ankle", "sole"])]
 
+        # Apply cylinder → capsule replacement if requested
+        if replace_cylinders_with_capsules:
+            self._replace_cylinders_with_capsules()
+
         # Setup robot configuration
         self._setup_robot_config()
 
         # Setup terrain interaction
         self._setup_terrain_interaction()
+
+    def _replace_cylinders_with_capsules(self):
+        """Replace all cylinder collision geoms with capsules in the MuJoCo model.
+
+        A URDF ``<cylinder>`` has flat end-caps, while a capsule adds
+        hemispherical caps of the same radius.  MuJoCo keeps the same
+        ``size`` layout for both types (``[radius, half_length]``), so
+        the only change needed is the ``geom_type`` field.
+
+        This is done **in-place** on ``self.robot_model`` so that all
+        subsequent calls to ``mj_collision`` / ``mj_geomDistance`` use
+        capsule geometry — matching IsaacLab's
+        ``replace_cylinders_with_capsules=True`` convention.
+        """
+        m = self.robot_model
+        n_replaced = 0
+        for gi in range(m.ngeom):
+            if m.geom_type[gi] == mujoco.mjtGeom.mjGEOM_CYLINDER:
+                m.geom_type[gi] = mujoco.mjtGeom.mjGEOM_CAPSULE
+                n_replaced += 1
+        if n_replaced > 0:
+            print(f"Replaced {n_replaced} cylinder geom(s) with capsules for collision.")
 
     def _setup_robot_config(self):
         """Setup robot configuration parameters."""

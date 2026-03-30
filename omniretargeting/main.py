@@ -383,6 +383,8 @@ def main():
     parser.add_argument("--vis", action="store_true", help="Visualize the retargeted motion")
     parser.add_argument("--save-video", dest="save_video", default=None, help="Save retargeted motion video to file (e.g. /tmp/out.mp4). Uses offscreen rendering (set MUJOCO_GL=egl for headless).")
     parser.add_argument("--framerate", type=float, default=None, help="Framerate of the motion (optional, defaults to 30.0 or auto-detected)")
+    parser.add_argument("--replace-cylinders-with-capsules", dest="replace_cylinders_with_capsules", action="store_true", default=False,
+                        help="Replace cylinder collision geoms with capsules to match IsaacLab/PhysX convention.")
     
     args = parser.parse_args()
 
@@ -426,6 +428,12 @@ def main():
     height_estimation = robot_config.get("height_estimation")
     base_orientation = robot_config.get("base_orientation")
     retargeting = robot_config.get("retargeting")
+
+    # Merge CLI flag into retargeting config
+    if retargeting is None:
+        retargeting = {}
+    if args.replace_cylinders_with_capsules:
+        retargeting["replace_cylinders_with_capsules"] = True
 
     # Handle terrain
     temp_terrain_path = None
