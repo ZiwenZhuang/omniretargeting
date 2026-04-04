@@ -619,9 +619,9 @@ class OmniRetargeter:
         return self.robot_model.nq - 7  # Subtract floating base DOF
 
     def get_joint_names(self) -> List[str]:
-        """Get the names of all robot joints."""
+        """Get the names of all robot joints (excluding floating base)."""
         return [self.robot_model.joint(i).name for i in range(self.robot_model.njnt)
-                if self.robot_model.joint(i).name]
+                if self.robot_model.joint(i).name and self.robot_model.jnt_type[i] != mujoco.mjtJoint.mjJNT_FREE]
 
     def validate_joint_mapping(self) -> List[str]:
         """Validate that the joint mapping is compatible with the robot.
