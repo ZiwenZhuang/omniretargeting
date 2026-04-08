@@ -1017,55 +1017,191 @@ class GenericInteractionRetargeter:
         Compute non-penetration constraints between robot geoms and the
         terrain trimesh.
 
-        For each robot collision geom whose world-frame position is within
-        *threshold* of the terrain surface, we add the linear constraint:
+        Samples points on the actual surface of each collision geom based on
+        its shape, then checks each point for penetration with the terrain.
+        This avoids the limitation of only checking the geom center which can
+        miss penetration when the geom has large extent.
+
+        **Trade-off**: This approach samples points on robot collision geoms
+        for checking against the external terrain trimesh. Only primitive geom
+        types (sphere, box, capsule, cylinder) are fully supported with surface
+        sampling. Other geom types (mesh, heightfield, etc.) fall back to only
+        checking the center point.
+
+        For each sampled point that is close to or inside the terrain, we add
+        the linear constraint:
 
             n^T J_a  dqa  >=  -(d - tol)
 
         where
         - d   is the signed distance (positive = above terrain),
         - n   is the outward terrain surface normal at the closest point,
-        - J_a is the translational Jacobian of the geom's body (columns for
-          the actuated DOFs only),
+        - J_a is the translational Jacobian of the geom's body at the sampled
+          point (columns for the actuated DOFs only),
         - tol is ``self.penetration_tolerance``.
         """
         import trimesh as _trimesh
 
+        def sample_geom_surface_points(geom, geom_pos, geom_rot):
+            """Sample points on the surface of a MuJoCo geom based on its type.
+            Returns an array of shape (N, 3) of world-frame points.
+
+            ## Implementation Notes / Trade-offs
+            Currently only supports **primitive-shaped collision geoms**:
+            - Sphere (mjGEOM_SPHERE)
+            - Box (mjGEOM_BOX)
+            - Capsule (mjGEOM_CAPSULE)
+            - Cylinder (mjGEOM_CYLINDER)
+            - Plane (skipped)
+
+            For other geom types (meshes, heightfields, ellipsoids), this falls back
+            to only checking the geom center point.
+
+            ## To add support for a new geom type:
+            1. Add a new `elif geom_type == mujoco.mjtGeom.mjGEOM_XXX:` case
+            2. Compute the appropriate surface points in the geom's local frame
+               based on the `geom.size` parameters
+            3. Transform the local points to world frame using:
+               `world_pt = geom_pos + geom_rot.apply(local_pt)`
+            4. Add all world points to the `points` list and return
+            """
+            geom_type = geom.type
+            size = geom.size
+            points = []
+
+            if geom_type == mujoco.mjtGeom.mjGEOM_SPHERE:
+                # Sphere: radius = size[0], sample points on surface
+                radius = size[0]
+                # Sample 6 outward points along major axes
+                for dx, dy, dz in [(1, 0, 0), (-1, 0, 0),
+                                   (0, 1, 0), (0, -1, 0),
+                                   (0, 0, 1), (0, 0, -1)]:
+                    local_pt = np.array([dx, dy, dz]) * radius
+                    world_pt = geom_pos + geom_rot.apply(local_pt)
+                    points.append(world_pt)
+                return np.array(points)
+
+            elif geom_type == mujoco.mjtGeom.mjGEOM_BOX:
+                # Box: size = half extents, sample center of each face
+                half_extents = size[:3]
+                # Sample center of each of the 6 faces
+                for sx, sy, sz in [(1, 0, 0), (-1, 0, 0),
+                                   (0, 1, 0), (0, -1, 0),
+                                   (0, 0, 1), (0, 0, -1)]:
+                    local_pt = np.array([
+                        sx * half_extents[0],
+                        sy * half_extents[1],
+                        sz * half_extents[2]
+                    ])
+                    world_pt = geom_pos + geom_rot.apply(local_pt)
+                    points.append(world_pt)
+                return np.array(points)
+
+            elif geom_type == mujoco.mjtGeom.mjGEOM_CAPSULE:
+                # Capsule: size[0] = radius, size[1] = half-length along x
+                radius = size[0]
+                half_len = size[1]
+                # Sample points on each end hemisphere + mid-body side points
+                for s in [-half_len, half_len]:
+                    for dx, dy, dz in [(1, 0, 0), (-1, 0, 0),
+                                       (0, 1, 0), (0, -1, 0),
+                                       (0, 0, 1), (0, 0, -1)]:
+                        local_pt = np.array([s, 0, 0])
+                        if dx != 0:
+                            local_pt[0] += dx * radius
+                        elif dy != 0:
+                            local_pt[1] += dy * radius
+                        else:
+                            local_pt[2] += dz * radius
+                        world_pt = geom_pos + geom_rot.apply(local_pt)
+                        points.append(world_pt)
+                # Add mid-body points along the cylinder surface
+                for theta in [0, np.pi/2, np.pi, 3*np.pi/2]:
+                    local_pt = np.array([
+                        0,
+                        radius * np.cos(theta),
+                        radius * np.sin(theta)
+                    ])
+                    world_pt = geom_pos + geom_rot.apply(local_pt)
+                    points.append(world_pt)
+                return np.array(points)
+
+            elif geom_type == mujoco.mjtGeom.mjGEOM_CYLINDER:
+                # Cylinder: size[0] = radius, size[1] = half-length along x
+                radius = size[0]
+                half_len = size[1]
+                # Sample center of each end cap + 4 side points at midpoint
+                for s in [-half_len, half_len]:
+                    local_pt = np.array([s, 0, 0])
+                    world_pt = geom_pos + geom_rot.apply(local_pt)
+                    points.append(world_pt)
+                for theta in [0, np.pi/2, np.pi, 3*np.pi/2]:
+                    local_pt = np.array([
+                        0,
+                        radius * np.cos(theta),
+                        radius * np.sin(theta)
+                    ])
+                    world_pt = geom_pos + geom_rot.apply(local_pt)
+                    points.append(world_pt)
+                return np.array(points)
+
+            elif geom_type == mujoco.mjtGeom.mjGEOM_PLANE:
+                # Plane is infinite, skip terrain collision checking
+                return np.empty((0, 3))
+
+            else:
+                # For other geom types (meshes, heightfields, ellipsoid),
+                # just return the center point as a fallback
+                return np.array([geom_pos])
+
         constraints: list = []
         m, d = self.robot_model, self.robot_data
 
-        # Collect world-frame positions of every collision geom
-        # (type 7 = mesh visual geoms are skipped; we keep capsule/sphere/box)
-        geom_positions = []
-        geom_indices = []
+        # Collect world-frame sample points on the surface of every collision geom
+        # Sample points based on actual geom shape instead of just checking center
+        all_points = []
+        all_geom_info = []
         for gi in range(m.ngeom):
-            # Skip purely visual geoms (type 7 = mesh with no collision)
+            # Skip purely visual geoms with no collision flags
             if m.geom_contype[gi] == 0 and m.geom_conaffinity[gi] == 0:
                 continue
-            pos = d.geom_xpos[gi].copy()
-            geom_positions.append(pos)
-            geom_indices.append(gi)
 
-        if len(geom_positions) == 0:
+            # Get current geom pose in world frame
+            pos = d.geom_xpos[gi].copy()
+            rot_mat = d.geom_xmat[gi].reshape(3, 3).copy()
+            rot = Rotation.from_matrix(rot_mat)
+
+            # Sample surface points based on geom type
+            geom = m.geom(gi)
+            points = sample_geom_surface_points(geom, pos, rot)
+
+            # Always add the center as a fallback even if other sampling failed
+            if len(points) == 0:
+                points = np.array([pos])
+
+            for pt in points:
+                all_points.append(pt)
+                all_geom_info.append((gi, pt))
+
+        if len(all_points) == 0:
             return constraints
 
-        geom_positions = np.array(geom_positions)  # (N, 3)
+        all_points = np.array(all_points)  # (N, 3)
 
-        # Query terrain mesh for closest points
+        # Query terrain mesh for closest points to each sampled point
         closest_pts, dists, tri_ids = _trimesh.proximity.closest_point(
-            self.terrain_mesh, geom_positions
+            self.terrain_mesh, all_points
         )
 
-        for k, gi in enumerate(geom_indices):
+        for k, (gi, query_pt) in enumerate(all_geom_info):
             if dists[k] > threshold:
                 continue
 
             # Signed distance: positive when above terrain.
-            # closest_pts[k] is on the surface; geom_positions[k] is the
-            # geom centre.  We define "above" as the direction of the face
-            # normal.
+            # closest_pts[k] is on the terrain surface; query_pt is the
+            # point on the geom surface. We define "above" as the direction
+            # of the terrain face normal.
             surface_pt = closest_pts[k]
-            geom_pt = geom_positions[k]
 
             # Face normal from terrain mesh
             face_normal = self.terrain_mesh.face_normals[tri_ids[k]]
@@ -1074,16 +1210,16 @@ class GenericInteractionRetargeter:
                 face_normal = -face_normal
 
             # Signed distance along the normal
-            signed_dist = np.dot(geom_pt - surface_pt, face_normal)
+            signed_dist = np.dot(query_pt - surface_pt, face_normal)
 
-            # Only constrain geoms that are close to or below the surface
+            # Only constrain points that are close to or below the surface
             if signed_dist > threshold:
                 continue
 
-            # Translational Jacobian for this geom's body at the geom position
+            # Translational Jacobian for this geom's body at the query point
             body_id = m.geom_bodyid[gi]
             J_full = self._calc_contact_jacobian_from_point(
-                body_id, geom_pt, input_world=True
+                body_id, query_pt, input_world=True
             )
             # Project onto terrain normal -> 1-D Jacobian
             J_n = face_normal @ J_full  # (nq,)
