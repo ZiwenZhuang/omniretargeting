@@ -223,13 +223,16 @@ class OmniRetargeter:
         base_orientations: np.ndarray | None = None,
         base_translations: np.ndarray | None = None,
         visualize_trajectory: bool = True,
+        enable_terrain_scaling: bool = False,
     ) -> Tuple[float, np.ndarray]:
         """
         Retarget SMPLX motion to the robot on the terrain.
 
         Args:
             smplx_trajectory: SMPLX joint positions of shape (T, J, 3) where T is frames, J is joints
-            terrain_coordinates: Optional terrain coordinate system reference points
+            enable_terrain_scaling: If True, estimate a terrain scale factor from the
+                SMPLX trajectory and retarget against a scaled terrain mesh. If False,
+                keep the original terrain mesh and use a scale factor of 1.0.
 
         Returns:
             Tuple of (terrain_scale, retargeted_trajectory)
@@ -237,10 +240,12 @@ class OmniRetargeter:
             - retargeted_trajectory: Robot motion of shape (T, 7 + DOF) with [pos, quat, joints]
         """
         # Step 1: Compute terrain scaling factor
-        terrain_scale = self._compute_terrain_scale(smplx_trajectory)
-
-        # Step 2: Scale terrain mesh
-        scaled_terrain = self._scale_terrain_mesh(terrain_scale)
+        if enable_terrain_scaling:
+            terrain_scale = self._compute_terrain_scale(smplx_trajectory)
+            scaled_terrain = self._scale_terrain_mesh(terrain_scale)
+        else:
+            terrain_scale = 1.0
+            scaled_terrain = self.terrain_mesh.copy()
 
         # Step 3: Process SMPLX trajectory
         processed_trajectory = self._process_smplx_trajectory(smplx_trajectory, terrain_scale)
