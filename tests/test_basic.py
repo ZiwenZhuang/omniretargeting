@@ -17,8 +17,6 @@ from omniretargeting.utils import validate_smplx_trajectory, compute_world_joint
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TEST_RESOURCES = REPO_ROOT / "tests" / "resources"
-AMASS_STAGEII_FIXTURE = TEST_RESOURCES / "amass" / "140_02_stageii.npz"
-TERRAIN_FIXTURE = TEST_RESOURCES / "terrain" / "simplelab_enlarged_noWall.stl"
 SMPLX_MODEL_DIR = Path("/localhdd/Datasets/")
 ROBOT_PROFILE_CASES = (
     pytest.param("unitree_g1", REPO_ROOT / "robot_models" / "unitree_g1" / "unitree_g1.json", id="g1"),
@@ -59,6 +57,18 @@ MOTION_CASES = (
         robot_profile=REPO_ROOT / "robot_models" / "unitree_h1" / "unitree_h1.json",
         motion_path=TEST_RESOURCES / "amass" / "140_02_stageii.npz",
         terrain_path=TEST_RESOURCES / "terrain" / "simplelab_enlarged_noWall.stl",
+    ),
+    MotionCase(
+        case_id="g1-amass-wallflip",
+        robot_profile=REPO_ROOT / "robot_models" / "unitree_g1" / "unitree_g1.json",
+        motion_path=TEST_RESOURCES / "amass" / "wall_flip_smplx_amass.npz",
+        terrain_path=TEST_RESOURCES / "terrain" / "wall_flip_scene.obj",
+    ),
+    MotionCase(
+        case_id="h1-amass-wallflip",
+        robot_profile=REPO_ROOT / "robot_models" / "unitree_h1" / "unitree_h1.json",
+        motion_path=TEST_RESOURCES / "amass" / "wall_flip_smplx_amass.npz",
+        terrain_path=TEST_RESOURCES / "terrain" / "wall_flip_scene.obj",
     ),
 )
 
