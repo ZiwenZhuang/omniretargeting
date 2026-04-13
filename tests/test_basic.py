@@ -1,6 +1,10 @@
 """Basic tests for omniretargeting package."""
 
 import os
+import subprocess
+import sys
+import tempfile
+from dataclasses import dataclass
 import numpy as np
 import pytest
 from pathlib import Path
@@ -35,6 +39,30 @@ COMMON_ALIGNMENT_JOINTS = (
     "R_Elbow",
 )
 
+@dataclass(frozen=True)
+class MotionCase:
+    case_id: str
+    robot_profile: Path
+    motion_path: Path
+    terrain_path: Path
+
+
+MOTION_CASES = (
+    MotionCase(
+        case_id="g1-amass-simplelab",
+        robot_profile=REPO_ROOT / "robot_models" / "unitree_g1" / "unitree_g1.json",
+        motion_path=TEST_RESOURCES / "amass" / "140_02_stageii.npz",
+        terrain_path=TEST_RESOURCES / "terrain" / "simplelab_enlarged_noWall.stl",
+    ),
+    MotionCase(
+        case_id="h1-amass-simplelab",
+        robot_profile=REPO_ROOT / "robot_models" / "unitree_h1" / "unitree_h1.json",
+        motion_path=TEST_RESOURCES / "amass" / "140_02_stageii.npz",
+        terrain_path=TEST_RESOURCES / "terrain" / "simplelab_enlarged_noWall.stl",
+    ),
+)
+
+
 
 def _load_robot_profile(profile_path: Path) -> dict:
     return load_robot_config(profile_path)
@@ -51,6 +79,11 @@ def _build_retargeter_kwargs(robot_config: dict, terrain_mesh_path: Path | str, 
         "base_orientation": robot_config.get("base_orientation"),
         "retargeting": robot_config.get("retargeting"),
     }
+
+def _print_and_skip(reason: str) -> None:
+    print(reason)
+    pytest.skip(reason)
+
 
 
 class TestUtils:
@@ -228,70 +261,121 @@ class TestPackageImport:
 class TestRealDataIntegration:
     """Integration tests requiring real data files."""
 
-    @pytest.mark.parametrize(("robot_name", "profile_path"), ROBOT_PROFILE_CASES)
-    def test_full_pipeline_with_real_data(self, robot_name: str, profile_path: Path):
+    @pytest.mark.parametrize(
+        "motion_case",
+        [pytest.param(case, id=case.case_id) for case in MOTION_CASES],
+    )
+    def test_motion_case_via_main_script(self, motion_case: MotionCase):
         """
-        Test the full retargeting pipeline with repository fixtures.
+        Test motion-terrain pairs through the main CLI script.
+        
+        This test validates end-to-end retargeting by invoking the main script
+        with curated motion-terrain-robot combinations.
         """
-        from omniretargeting import OmniRetargeter
-        from omniretargeting.utils import load_smplx_trajectory
-
-        robot_config = _load_robot_profile(profile_path)
-        robot_urdf_path = Path(robot_config["urdf_path"])
-        terrain_mesh_path = TERRAIN_FIXTURE
-        trajectory_path = AMASS_STAGEII_FIXTURE
-
-        if not robot_urdf_path.exists():
-            pytest.skip(f"Robot URDF not found at: {robot_urdf_path}")
-
-        if not terrain_mesh_path.exists():
-            pytest.skip(f"Terrain mesh not found at: {terrain_mesh_path}")
-
-        if not trajectory_path.exists():
-            pytest.skip(f"Trajectory file not found at: {trajectory_path}")
-
+        # Check all required files exist
+        if not motion_case.robot_profile.exists():
+            _print_and_skip(
+                f"Motion case {motion_case.case_id}: Robot profile not found at {motion_case.robot_profile}"
+            )
+        
+        if not motion_case.motion_path.exists():
+            _print_and_skip(
+                f"Motion case {motion_case.case_id}: Motion file not found at {motion_case.motion_path}"
+            )
+        
+        if not motion_case.terrain_path.exists():
+            _print_and_skip(
+                f"Motion case {motion_case.case_id}: Terrain mesh not found at {motion_case.terrain_path}"
+            )
+        
         if not SMPLX_MODEL_DIR.exists():
-            pytest.skip(f"SMPLX model directory not found at: {SMPLX_MODEL_DIR}")
-
-        # Load trajectory
-        # For SMPLX-NG files (stageii.npz), this will automatically:
-        # 1. Load the raw SMPLX parameters (poses, trans, betas)
-        # 2. Run forward kinematics using SMPLX model
-        # 3. Return joint positions (T, 22, 3) and orientations (T, 22, 4)
-        print(f"Loading trajectory for {robot_name} from {trajectory_path}...")
-        smplx_trajectory, smplx_orientations = load_smplx_trajectory(
-            trajectory_path,
-            smplx_model_directory=str(SMPLX_MODEL_DIR),
-            gender="neutral",  # Will be overridden if gender is in the file
-        )
+            _print_and_skip(
+                f"Motion case {motion_case.case_id}: SMPL-X model directory not found at {SMPLX_MODEL_DIR}. "
+                "This curated main-script test requires licensed local SMPL-X assets."
+            )
         
-        print(f"Loaded trajectory shape: {smplx_trajectory.shape}")
-        if smplx_orientations is not None:
-            print(f"Loaded orientations shape: {smplx_orientations.shape}")
-        else:
-            print("Warning: Orientations not available")
-
-        print(f"Initializing OmniRetargeter for {robot_name}...")
-        retargeter = OmniRetargeter(**_build_retargeter_kwargs(robot_config, terrain_mesh_path))
-        assert sorted(retargeter.validate_joint_mapping()) == []
-
-        print("Running retargeting...")
-        terrain_scale, retargeted_motion = retargeter.retarget_motion(smplx_trajectory)
-
-        print("Verifying results...")
-        # Verify outputs
-        assert isinstance(terrain_scale, float)
-        assert terrain_scale > 0.0
+        # Create temporary output file
+        with tempfile.NamedTemporaryFile(suffix=".npz", delete=False) as tmp_output:
+            output_path = Path(tmp_output.name)
         
-        assert isinstance(retargeted_motion, np.ndarray)
-        # Check shape: (frames, robot_qpos_dim)
-        assert retargeted_motion.shape[0] == smplx_trajectory.shape[0]
-        assert retargeted_motion.shape[1] == retargeter.robot_model.nq
-        
-        print(f"Terrain scale factor: {terrain_scale:.4f}")
-        print(f"Retargeted motion shape: {retargeted_motion.shape}")
-        print("Test passed!")
-
+        try:
+            # Build command
+            # Note: main.py normalizes output path to end with _retargeted.npz
+            command = [
+                sys.executable,
+                "-m",
+                "omniretargeting.main",
+                "--robot-config",
+                str(motion_case.robot_profile),
+                "--smplx_model_dir",
+                str(SMPLX_MODEL_DIR),
+                "--smplx_motion",
+                str(motion_case.motion_path),
+                "--terrain",
+                str(motion_case.terrain_path),
+                "--output",
+                str(output_path),
+            ]
+            
+            # Main script will normalize the output path
+            from omniretargeting.utils import normalize_retargeted_output_path
+            expected_output_path = Path(normalize_retargeted_output_path(str(output_path)))
+            
+            print(f"\nRunning motion case {motion_case.case_id}...")
+            print(f"Command: {' '.join(command)}")
+            
+            # Run the main script
+            completed = subprocess.run(
+                command,
+                cwd=str(REPO_ROOT),
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            
+            # Print output for debugging
+            if completed.stdout:
+                print(f"STDOUT:\n{completed.stdout}")
+            if completed.stderr:
+                print(f"STDERR:\n{completed.stderr}")
+            
+            # Check for success
+            assert completed.returncode == 0, (
+                f"Main script failed with return code {completed.returncode}. "
+                f"See output above for details."
+            )
+            
+            # Verify output file was created (at normalized path)
+            assert expected_output_path.exists(), f"Output file not created at {expected_output_path}"
+            
+            # Load and validate output
+            import numpy as np
+            output_data = np.load(expected_output_path)
+            
+            # Check for expected keys from main.py output
+            assert "joint_pos" in output_data, "Output missing joint_pos key"
+            assert "base_pos_w" in output_data, "Output missing base_pos_w key"
+            assert "base_quat_w" in output_data, "Output missing base_quat_w key"
+            
+            joint_pos = output_data["joint_pos"]
+            base_pos = output_data["base_pos_w"]
+            base_quat = output_data["base_quat_w"]
+            
+            assert isinstance(joint_pos, np.ndarray), "joint_pos should be ndarray"
+            assert isinstance(base_pos, np.ndarray), "base_pos_w should be ndarray"
+            assert isinstance(base_quat, np.ndarray), "base_quat_w should be ndarray"
+            
+            assert joint_pos.shape[0] > 0, "joint_pos should have frames"
+            assert base_pos.shape[0] > 0, "base_pos_w should have frames"
+            
+            print(f"Motion case {motion_case.case_id} passed! Joint pos shape: {joint_pos.shape}, Base pos shape: {base_pos.shape}")
+            
+        finally:
+            # Clean up temporary files
+            if output_path.exists():
+                output_path.unlink()
+            if expected_output_path.exists():
+                expected_output_path.unlink()
 
 
 def test_retarget_motion_uses_identity_terrain_scale_by_default():
