@@ -293,6 +293,79 @@ class TestRealDataIntegration:
         print("Test passed!")
 
 
+
+def test_retarget_motion_uses_identity_terrain_scale_by_default():
+    from omniretargeting import OmniRetargeter
+
+    original_terrain_copy = Mock(name="original_terrain_copy")
+    scaled_terrain = Mock(name="scaled_terrain")
+    processed_trajectory = np.full((2, 22, 3), 7.0, dtype=float)
+
+    retargeter = OmniRetargeter.__new__(OmniRetargeter)
+    retargeter.terrain_mesh = Mock()
+    retargeter.terrain_mesh.copy.return_value = original_terrain_copy
+    retargeter._compute_terrain_scale = Mock(return_value=2.5)
+    retargeter._scale_terrain_mesh = Mock(return_value=scaled_terrain)
+    retargeter._process_smplx_trajectory = Mock(return_value=processed_trajectory)
+    retargeter._perform_retargeting = Mock(return_value=np.array([[1.0, 2.0, 3.0]]))
+    retargeter._visualize_trajectory = Mock()
+
+    smplx_trajectory = np.ones((2, 22, 3), dtype=float)
+
+    terrain_scale, retargeted_motion = retargeter.retarget_motion(
+        smplx_trajectory,
+        visualize_trajectory=False,
+        enable_terrain_scaling=False,
+    )
+
+    assert terrain_scale == 1.0
+    assert isinstance(retargeted_motion, np.ndarray)
+    retargeter._compute_terrain_scale.assert_not_called()
+    retargeter._scale_terrain_mesh.assert_not_called()
+    retargeter.terrain_mesh.copy.assert_called_once_with()
+    retargeter._process_smplx_trajectory.assert_called_once_with(smplx_trajectory, 1.0)
+    retargeter._perform_retargeting.assert_called_once_with(
+        processed_trajectory,
+        original_terrain_copy,
+        base_orientations=None,
+        base_translations=None,
+    )
+
+
+def test_retarget_motion_applies_terrain_scale_when_enabled():
+    from omniretargeting import OmniRetargeter
+
+    scaled_terrain = Mock(name="scaled_terrain")
+    processed_trajectory = np.full((2, 22, 3), 9.0, dtype=float)
+
+    retargeter = OmniRetargeter.__new__(OmniRetargeter)
+    retargeter.terrain_mesh = Mock()
+    retargeter._compute_terrain_scale = Mock(return_value=2.5)
+    retargeter._scale_terrain_mesh = Mock(return_value=scaled_terrain)
+    retargeter._process_smplx_trajectory = Mock(return_value=processed_trajectory)
+    retargeter._perform_retargeting = Mock(return_value=np.array([[4.0, 5.0, 6.0]]))
+    retargeter._visualize_trajectory = Mock()
+
+    smplx_trajectory = np.ones((2, 22, 3), dtype=float)
+
+    terrain_scale, retargeted_motion = retargeter.retarget_motion(
+        smplx_trajectory,
+        visualize_trajectory=False,
+        enable_terrain_scaling=True,
+    )
+
+    assert terrain_scale == 2.5
+    assert isinstance(retargeted_motion, np.ndarray)
+    retargeter._compute_terrain_scale.assert_called_once_with(smplx_trajectory)
+    retargeter._scale_terrain_mesh.assert_called_once_with(2.5)
+    retargeter._process_smplx_trajectory.assert_called_once_with(smplx_trajectory, 2.5)
+    retargeter._perform_retargeting.assert_called_once_with(
+        processed_trajectory,
+        scaled_terrain,
+        base_orientations=None,
+        base_translations=None,
+    )
+
 @pytest.mark.parametrize(("robot_name", "profile_path"), ROBOT_PROFILE_CASES)
 def test_tpose_retargeting_alignment(robot_name: str, profile_path: Path):
     """

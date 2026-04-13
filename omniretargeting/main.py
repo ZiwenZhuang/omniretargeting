@@ -379,6 +379,12 @@ def main():
     parser.add_argument("--smplx_motion", required=True, help="Path to SMPLX motion file (.npz)")
     parser.add_argument("--output", required=True, help="Path to save output motion (.npy)")
     parser.add_argument("--terrain", help="Path to terrain mesh file (optional, defaults to flat ground)")
+    parser.add_argument(
+        "--output-scaled-terrain",
+        dest="output_scaled_terrain",
+        default=None,
+        help="Path to save the scaled terrain mesh. When provided, terrain scaling is enabled.",
+    )
     parser.add_argument("--mapping", help="Path to joint mapping JSON file (optional, overrides robot profile mapping)")
     parser.add_argument("--vis", action="store_true", help="Visualize the retargeted motion")
     parser.add_argument("--save-video", dest="save_video", default=None, help="Save retargeted motion video to file (e.g. /tmp/out.mp4). Uses offscreen rendering (set MUJOCO_GL=egl for headless).")
@@ -498,10 +504,20 @@ def main():
 
         # Perform retargeting
         print("Retargeting motion...")
+        enable_terrain_scaling = bool(args.output_scaled_terrain)
         terrain_scale, retargeted_motion = retargeter.retarget_motion(
             smplx_trajectory,
             visualize_trajectory=args.vis,
+            enable_terrain_scaling=enable_terrain_scaling,
         )
+
+        if args.output_scaled_terrain:
+            scaled_terrain = trimesh.load(terrain_path, force="mesh")
+            scaled_terrain.apply_scale(terrain_scale)
+            output_scaled_terrain_path = Path(args.output_scaled_terrain)
+            output_scaled_terrain_path.parent.mkdir(parents=True, exist_ok=True)
+            scaled_terrain.export(output_scaled_terrain_path)
+            print(f"Saved scaled terrain mesh to {output_scaled_terrain_path}")
         
         # Save output
         print(f"Saving output to {args.output}...")
@@ -544,7 +560,8 @@ def main():
         if (args.vis or args.save_video) and terrain_path and os.path.exists(terrain_path):
             try:
                 vis_terrain = trimesh.load(terrain_path, force='mesh')
-                vis_terrain.apply_scale(terrain_scale)
+                if args.output_scaled_terrain:
+                    vis_terrain.apply_scale(terrain_scale)
             except Exception as e:
                 print(f"Could not load terrain for visualization: {e}")
 
