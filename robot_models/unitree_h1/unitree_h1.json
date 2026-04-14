@@ -28,7 +28,6 @@
   },
   "retargeting": {
     "collision_detection_threshold": 0.1,
-    "terrain_sample_points": 120,
-    "foot_geom_keywords": ["foot", "ankle", "sole"]
+    "terrain_sample_points": 120
   }
 }

@@ -309,7 +309,7 @@ OmniRetargeting adapts the interaction mesh retargeting approach from the holoso
 
 - **Penetration constraint**: The terrain penetration constraint is not yet implemented. The optimization framework has the `_compute_penetration_constraints` method and collision detection scaffolding, but they are currently disabled (`retargeting.py`, lines 520–524) because collision detection setup is incomplete. As a result, retargeted motion may exhibit foot–terrain penetration in some cases.
 - **Scaled terrain export**: The current CLI saves retargeted motion to `.npz` but does not persist the scaled terrain mesh to disk. Future work: add an optional argument (for example `--output_scaled_terrain`) to export the scaled terrain mesh used during retargeting.
-- Other known TODOs: proper coordinate system alignment (`utils.py`), collision pair setup (`_setup_collision_detection` in `retargeting.py`).
+- Other known TODOs: proper coordinate system alignment (`utils.py`).
 
 ## Contributing
 

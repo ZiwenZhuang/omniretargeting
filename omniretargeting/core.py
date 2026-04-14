@@ -393,7 +393,6 @@ class OmniRetargeter:
             self.robot_height,
             collision_detection_threshold=float(self.retargeting_config.get("collision_detection_threshold", 0.1)),
             terrain_sample_points=int(self.retargeting_config.get("terrain_sample_points", 100)),
-            foot_geom_keywords=list(self.retargeting_config.get("foot_geom_keywords", ["foot", "ankle", "sole"])),
             valid_joint_names=self.valid_joint_names,  # CRITICAL: Pass ordered joint names for consistency
             replace_cylinders_with_capsules=bool(self.retargeting_config.get("replace_cylinders_with_capsules", False)),
         )
