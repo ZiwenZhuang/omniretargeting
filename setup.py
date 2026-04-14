@@ -24,6 +24,7 @@ setup(
         "cvxpy",
         "libigl",
         "tyro",
+        "imageio[ffmpeg]",
         # Additional dependencies for generic mesh processing
         "open3d",
         "pyvista",
