@@ -49,9 +49,10 @@ class GenericInteractionRetargeter:
         terrain_sample_points: int = 100,
         foot_geom_keywords: Optional[List[str]] = None,
         valid_joint_names: Optional[List[str]] = None,
+        replace_cylinders_with_capsules: bool = False,
     ):
         """Initialize the generic retargeter.
-        
+
         Args:
             robot_model: MuJoCo model of the robot
             robot_data: MuJoCo data for the robot
@@ -66,6 +67,11 @@ class GenericInteractionRetargeter:
             terrain_sample_points: Number of sampled terrain points for interaction mesh
             foot_geom_keywords: Keywords to identify foot-related geoms for terrain contact
             valid_joint_names: Ordered list of joint names to ensure consistent ordering
+            replace_cylinders_with_capsules: If True, replace all cylinder collision geoms
+                with capsules before computing penetration constraints. This matches
+                IsaacLab/PhysX convention where ``replace_cylinders_with_capsules=True``
+                is commonly used, ensuring that the retargeted motion is checked against
+                the same collision shapes used in downstream simulation.
         """
         self.robot_model = robot_model
         self.robot_data = robot_data
@@ -100,11 +106,37 @@ class GenericInteractionRetargeter:
         self.terrain_sample_points = int(terrain_sample_points)
         self.foot_geom_keywords = [kw.lower() for kw in (foot_geom_keywords or ["foot", "ankle", "sole"])]
 
+        # Apply cylinder → capsule replacement if requested
+        if replace_cylinders_with_capsules:
+            self._replace_cylinders_with_capsules()
+
         # Setup robot configuration
         self._setup_robot_config()
 
         # Setup terrain interaction
         self._setup_terrain_interaction()
+
+    def _replace_cylinders_with_capsules(self):
+        """Replace all cylinder collision geoms with capsules in the MuJoCo model.
+
+        A URDF ``<cylinder>`` has flat end-caps, while a capsule adds
+        hemispherical caps of the same radius.  MuJoCo keeps the same
+        ``size`` layout for both types (``[radius, half_length]``), so
+        the only change needed is the ``geom_type`` field.
+
+        This is done **in-place** on ``self.robot_model`` so that all
+        subsequent calls to ``mj_collision`` / ``mj_geomDistance`` use
+        capsule geometry — matching IsaacLab's
+        ``replace_cylinders_with_capsules=True`` convention.
+        """
+        m = self.robot_model
+        n_replaced = 0
+        for gi in range(m.ngeom):
+            if m.geom_type[gi] == mujoco.mjtGeom.mjGEOM_CYLINDER:
+                m.geom_type[gi] = mujoco.mjtGeom.mjGEOM_CAPSULE
+                n_replaced += 1
+        if n_replaced > 0:
+            print(f"Replaced {n_replaced} cylinder geom(s) with capsules for collision.")
 
     def _setup_robot_config(self):
         """Setup robot configuration parameters."""
@@ -522,11 +554,9 @@ class GenericInteractionRetargeter:
             dqa <= (self.q_a_ub - q_a_current),
         ])
 
-        # Terrain penetration constraints
-        # DISABLED: Penetration constraints are not working correctly yet
-        # TODO: Re-enable after fixing collision detection
-        # penetration_constraints = self._compute_penetration_constraints(q, dqa)
-        # constraints.extend(penetration_constraints)
+        # Non-penetration constraints (self-collision + terrain)
+        penetration_constraints = self._compute_penetration_constraints(q, dqa)
+        constraints.extend(penetration_constraints)
 
         # Trust region
         constraints.append(cp.SOC(self.step_size, dqa))
@@ -921,67 +951,283 @@ class GenericInteractionRetargeter:
 
     def _compute_penetration_constraints(self, q: np.ndarray, dqa: cp.Variable) -> List[cp.Constraint]:
         """
-        Compute penetration constraints using MuJoCo collision detection.
-        
-        This method uses MuJoCo's collision detection to find geometry pairs that are
-        close to contact, then computes signed distance and contact Jacobians for each pair.
+        Compute penetration constraints for robot-robot and robot-terrain contacts.
+
+        Two sources of constraints are combined:
+        1. **Self-collision** – MuJoCo's built-in collision detection finds pairs of
+           robot geoms that are close to each other and builds linearised
+           non-penetration constraints via contact Jacobians.
+        2. **Terrain penetration** – for every robot geom whose centre is within
+           ``collision_detection_threshold`` of the terrain mesh surface (measured
+           via ``trimesh.proximity.closest_point``), a unilateral constraint is
+           added that pushes the geom upward (in the terrain-surface-normal
+           direction) to avoid terrain penetration.
+
+        The terrain mesh is NOT embedded in the MuJoCo model, so MuJoCo's own
+        collision pipeline cannot detect robot-terrain contacts.  We handle them
+        analytically using the trimesh proximity query and the robot's
+        translational Jacobian.
         """
         constraints = []
 
-        # Update robot state (should already be done, but ensure it's current)
+        # Ensure kinematics are current
         self.robot_data.qpos[:] = q
         mujoco.mj_forward(self.robot_model, self.robot_data)
 
         m, d = self.robot_model, self.robot_data
         threshold = float(self.collision_detection_threshold)
 
-        # 1) Fast prefilter via mj_collision
+        # ------------------------------------------------------------------
+        # 1) Robot self-collision constraints (via MuJoCo collision)
+        # ------------------------------------------------------------------
         candidates = self._prefilter_pairs_with_mj_collision(threshold)
-
-        # 2) Compute precise distance and Jacobians for each candidate
         fromto = np.zeros(6, dtype=float)
         contype, conaff = m.geom_contype, m.geom_conaffinity
 
-        def masks_ok(g1, g2):
-            """Check if this geometry pair should be considered for collision."""
-            # Skip if both geometries have no collision masks
-            if contype[g1] == 0 and conaff[g1] == 0:
-                return False
-            if contype[g2] == 0 and conaff[g2] == 0:
-                return False
-            
-            # For now, accept all valid collision pairs
-            # You can add custom filtering logic here (e.g., skip certain object-ground pairs)
-            return True
-
         for g1, g2 in candidates:
-            if not masks_ok(g1, g2):
+            # Skip geoms with no collision masks
+            if contype[g1] == 0 and conaff[g1] == 0:
+                continue
+            if contype[g2] == 0 and conaff[g2] == 0:
                 continue
 
             fromto[:] = 0.0
             dist = mujoco.mj_geomDistance(m, d, g1, g2, threshold, fromto)
-            
             if dist <= threshold:
-                # Compute relative contact Jacobian
                 J_rel = self._compute_jacobian_for_contact_relative(
                     g1, g2, self._geom_names[g1], self._geom_names[g2], fromto, dist
                 )
-                
-                # Extract optimized part
-                # J_rel has shape (nq,), indices match qpos coordinates
-                valid_indices = self.q_a_indices[self.q_a_indices < J_rel.shape[0]]
-
-                J_rel_actuated = J_rel[valid_indices]
-                
-                # Pad if needed
-                if len(J_rel_actuated) < self.nq_a:
-                    J_pad = np.zeros(self.nq_a)
-                    J_pad[:len(J_rel_actuated)] = J_rel_actuated
-                    J_rel_actuated = J_pad
-                
-                # Add non-penetration constraint: J @ dqa >= -dist - tolerance
+                Ja = J_rel[self.q_a_indices]
                 rhs = -dist - self.penetration_tolerance
-                constraints.append(J_rel_actuated @ dqa >= rhs)
+                constraints.append(Ja @ dqa >= rhs)
+
+        # ------------------------------------------------------------------
+        # 2) Robot-terrain penetration constraints (via trimesh proximity)
+        # ------------------------------------------------------------------
+        constraints.extend(
+            self._compute_terrain_penetration_constraints(q, dqa, threshold)
+        )
+
+        return constraints
+
+    def _compute_terrain_penetration_constraints(
+        self, q: np.ndarray, dqa: cp.Variable, threshold: float
+    ) -> List[cp.Constraint]:
+        """
+        Compute non-penetration constraints between robot geoms and the
+        terrain trimesh.
+
+        Samples points on the actual surface of each collision geom based on
+        its shape, then checks each point for penetration with the terrain.
+        This avoids the limitation of only checking the geom center which can
+        miss penetration when the geom has large extent.
+
+        **Trade-off**: This approach samples points on robot collision geoms
+        for checking against the external terrain trimesh. Only primitive geom
+        types (sphere, box, capsule, cylinder) are fully supported with surface
+        sampling. Other geom types (mesh, heightfield, etc.) fall back to only
+        checking the center point.
+
+        For each sampled point that is close to or inside the terrain, we add
+        the linear constraint:
+
+            n^T J_a  dqa  >=  -(d - tol)
+
+        where
+        - d   is the signed distance (positive = above terrain),
+        - n   is the outward terrain surface normal at the closest point,
+        - J_a is the translational Jacobian of the geom's body at the sampled
+          point (columns for the actuated DOFs only),
+        - tol is ``self.penetration_tolerance``.
+        """
+        import trimesh as _trimesh
+
+        def sample_geom_surface_points(geom, geom_pos, geom_rot):
+            """Sample points on the surface of a MuJoCo geom based on its type.
+            Returns an array of shape (N, 3) of world-frame points.
+
+            ## Implementation Notes / Trade-offs
+            Currently only supports **primitive-shaped collision geoms**:
+            - Sphere (mjGEOM_SPHERE)
+            - Box (mjGEOM_BOX)
+            - Capsule (mjGEOM_CAPSULE)
+            - Cylinder (mjGEOM_CYLINDER)
+            - Plane (skipped)
+
+            For other geom types (meshes, heightfields, ellipsoids), this falls back
+            to only checking the geom center point.
+
+            ## To add support for a new geom type:
+            1. Add a new `elif geom_type == mujoco.mjtGeom.mjGEOM_XXX:` case
+            2. Compute the appropriate surface points in the geom's local frame
+               based on the `geom.size` parameters
+            3. Transform the local points to world frame using:
+               `world_pt = geom_pos + geom_rot.apply(local_pt)`
+            4. Add all world points to the `points` list and return
+            """
+            geom_type = geom.type
+            size = geom.size
+            points = []
+
+            if geom_type == mujoco.mjtGeom.mjGEOM_SPHERE:
+                # Sphere: radius = size[0], sample points on surface
+                radius = size[0]
+                # Sample 6 outward points along major axes
+                for dx, dy, dz in [(1, 0, 0), (-1, 0, 0),
+                                   (0, 1, 0), (0, -1, 0),
+                                   (0, 0, 1), (0, 0, -1)]:
+                    local_pt = np.array([dx, dy, dz]) * radius
+                    world_pt = geom_pos + geom_rot.apply(local_pt)
+                    points.append(world_pt)
+                return np.array(points)
+
+            elif geom_type == mujoco.mjtGeom.mjGEOM_BOX:
+                # Box: size = half extents, sample center of each face
+                half_extents = size[:3]
+                # Sample center of each of the 6 faces
+                for sx, sy, sz in [(1, 0, 0), (-1, 0, 0),
+                                   (0, 1, 0), (0, -1, 0),
+                                   (0, 0, 1), (0, 0, -1)]:
+                    local_pt = np.array([
+                        sx * half_extents[0],
+                        sy * half_extents[1],
+                        sz * half_extents[2]
+                    ])
+                    world_pt = geom_pos + geom_rot.apply(local_pt)
+                    points.append(world_pt)
+                return np.array(points)
+
+            elif geom_type == mujoco.mjtGeom.mjGEOM_CAPSULE:
+                # Capsule: size[0] = radius, size[1] = half-length along x
+                radius = size[0]
+                half_len = size[1]
+                # Sample points on each end hemisphere + mid-body side points
+                for s in [-half_len, half_len]:
+                    for dx, dy, dz in [(1, 0, 0), (-1, 0, 0),
+                                       (0, 1, 0), (0, -1, 0),
+                                       (0, 0, 1), (0, 0, -1)]:
+                        local_pt = np.array([s, 0, 0])
+                        if dx != 0:
+                            local_pt[0] += dx * radius
+                        elif dy != 0:
+                            local_pt[1] += dy * radius
+                        else:
+                            local_pt[2] += dz * radius
+                        world_pt = geom_pos + geom_rot.apply(local_pt)
+                        points.append(world_pt)
+                # Add mid-body points along the cylinder surface
+                for theta in [0, np.pi/2, np.pi, 3*np.pi/2]:
+                    local_pt = np.array([
+                        0,
+                        radius * np.cos(theta),
+                        radius * np.sin(theta)
+                    ])
+                    world_pt = geom_pos + geom_rot.apply(local_pt)
+                    points.append(world_pt)
+                return np.array(points)
+
+            elif geom_type == mujoco.mjtGeom.mjGEOM_CYLINDER:
+                # Cylinder: size[0] = radius, size[1] = half-length along x
+                radius = size[0]
+                half_len = size[1]
+                # Sample center of each end cap + 4 side points at midpoint
+                for s in [-half_len, half_len]:
+                    local_pt = np.array([s, 0, 0])
+                    world_pt = geom_pos + geom_rot.apply(local_pt)
+                    points.append(world_pt)
+                for theta in [0, np.pi/2, np.pi, 3*np.pi/2]:
+                    local_pt = np.array([
+                        0,
+                        radius * np.cos(theta),
+                        radius * np.sin(theta)
+                    ])
+                    world_pt = geom_pos + geom_rot.apply(local_pt)
+                    points.append(world_pt)
+                return np.array(points)
+
+            elif geom_type == mujoco.mjtGeom.mjGEOM_PLANE:
+                # Plane is infinite, skip terrain collision checking
+                return np.empty((0, 3))
+
+            else:
+                # For other geom types (meshes, heightfields, ellipsoid),
+                # just return the center point as a fallback
+                return np.array([geom_pos])
+
+        constraints: list = []
+        m, d = self.robot_model, self.robot_data
+
+        # Collect world-frame sample points on the surface of every collision geom
+        # Sample points based on actual geom shape instead of just checking center
+        all_points = []
+        all_geom_info = []
+        for gi in range(m.ngeom):
+            # Skip purely visual geoms with no collision flags
+            if m.geom_contype[gi] == 0 and m.geom_conaffinity[gi] == 0:
+                continue
+
+            # Get current geom pose in world frame
+            pos = d.geom_xpos[gi].copy()
+            rot_mat = d.geom_xmat[gi].reshape(3, 3).copy()
+            rot = Rotation.from_matrix(rot_mat)
+
+            # Sample surface points based on geom type
+            geom = m.geom(gi)
+            points = sample_geom_surface_points(geom, pos, rot)
+
+            # Always add the center as a fallback even if other sampling failed
+            if len(points) == 0:
+                points = np.array([pos])
+
+            for pt in points:
+                all_points.append(pt)
+                all_geom_info.append((gi, pt))
+
+        if len(all_points) == 0:
+            return constraints
+
+        all_points = np.array(all_points)  # (N, 3)
+
+        # Query terrain mesh for closest points to each sampled point
+        closest_pts, dists, tri_ids = _trimesh.proximity.closest_point(
+            self.terrain_mesh, all_points
+        )
+
+        for k, (gi, query_pt) in enumerate(all_geom_info):
+            if dists[k] > threshold:
+                continue
+
+            # Signed distance: positive when above terrain.
+            # closest_pts[k] is on the terrain surface; query_pt is the
+            # point on the geom surface. We define "above" as the direction
+            # of the terrain face normal.
+            surface_pt = closest_pts[k]
+
+            # Face normal from terrain mesh
+            face_normal = self.terrain_mesh.face_normals[tri_ids[k]]
+            # Ensure normal points "outward" (upward for typical terrains)
+            if face_normal[2] < 0:
+                face_normal = -face_normal
+
+            # Signed distance along the normal
+            signed_dist = np.dot(query_pt - surface_pt, face_normal)
+
+            # Only constrain points that are close to or below the surface
+            if signed_dist > threshold:
+                continue
+
+            # Translational Jacobian for this geom's body at the query point
+            body_id = m.geom_bodyid[gi]
+            J_full = self._calc_contact_jacobian_from_point(
+                body_id, query_pt, input_world=True
+            )
+            # Project onto terrain normal -> 1-D Jacobian
+            J_n = face_normal @ J_full  # (nq,)
+            Ja = J_n[self.q_a_indices]
+
+            # Constraint: J_a @ dqa >= -(signed_dist - tolerance)
+            rhs = -signed_dist - self.penetration_tolerance
+            constraints.append(Ja @ dqa >= rhs)
 
         return constraints
 

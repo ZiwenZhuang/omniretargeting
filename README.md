@@ -72,7 +72,10 @@ retargeter = OmniRetargeter(
 )
 
 # Perform retargeting
-terrain_scale, retargeted_motion = retargeter.retarget_motion(smplx_trajectory)
+terrain_scale, retargeted_motion = retargeter.retarget_motion(
+    smplx_trajectory,
+    enable_terrain_scaling=True,
+)
 
 print(f"Terrain scale factor: {terrain_scale}")
 print(f"Retargeted motion shape: {retargeted_motion.shape}")  # (T, 7 + DOF)
@@ -161,6 +164,8 @@ Supports common mesh formats:
 - `.ply` (Polygon File Format)
 - `.gltf`/`.glb` (glTF)
 
+1. **Optional Terrain Scaling**: The terrain mesh remains unscaled by default. If `--output-scaled-terrain` is provided, OmniRetargeting computes a terrain scale factor, retargets against the scaled terrain mesh, and writes that scaled mesh to disk.
+
 ### Robot URDF
 Standard URDF format for humanoid robots. The system automatically:
 - Detects robot height and dimensions
@@ -172,10 +177,13 @@ Standard URDF format for humanoid robots. The system automatically:
 The `retarget_motion()` method returns a tuple:
 
 ```python
-terrain_scale, retargeted_motion = retargeter.retarget_motion(smplx_trajectory)
+terrain_scale, retargeted_motion = retargeter.retarget_motion(
+    smplx_trajectory,
+    enable_terrain_scaling=True,
+)
 ```
 
-- **`terrain_scale`**: Float scaling factor applied to the terrain mesh
+- **`terrain_scale`**: `1.0` by default, or the computed terrain scaling factor when terrain scaling is enabled
 - **`retargeted_motion`**: Numpy array of shape `(T, 7 + DOF)` containing:
   - `[0:3]`: Root position (x, y, z)
   - `[3:7]`: Root quaternion (w, x, y, z)
@@ -204,7 +212,8 @@ python -m omniretargeting.main \
   --smplx_model_dir /path/to/smplx/models \
   --smplx_motion /path/to/motion.npz \
   --terrain /path/to/terrain.obj \
-  --output /path/to/output.npz
+  --output /path/to/output.npz \
+  --output-scaled-terrain /path/to/scaled-terrain.obj
 ```
 
 `--robot-config` defaults to `robot_models/unitree_g1/unitree_g1.json`. The robot URDF path must be set as `urdf_path` in that JSON profile (the CLI does not accept a separate URDF argument).
