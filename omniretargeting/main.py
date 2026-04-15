@@ -117,6 +117,12 @@ def temporary_visualization_scene(urdf_path, terrain_mesh, target_faces=5000):
         <color rgba="0.6 0.6 0.6 1"/>
       </material>
     </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="{mesh_filename_in_urdf}" scale="1 1 1"/>
+      </geometry>
+    </collision>
   </link>
 """
                 new_content = urdf_content.replace("</robot>", terrain_link + "\n</robot>")
@@ -243,7 +249,7 @@ def visualize_trajectory(urdf_path, trajectory, smplx_trajectory=None, terrain_m
         return
 
     print("Launching viewer...")
-    print("Controls: Space to pause/resume, [ and ] to step frames.")
+    print("Controls: Space to pause/resume, Left/Right arrows to step frames.")
     
     with temporary_visualization_scene(urdf_path, terrain_mesh) as model_path:
         # Load model
@@ -267,8 +273,29 @@ def visualize_trajectory(urdf_path, trajectory, smplx_trajectory=None, terrain_m
         # Set map values for better visibility
         model.vis.map.znear = 0.001  # Better near clipping
         model.vis.map.zfar = 50.0    # Better far clipping
-        
-        with mujoco.viewer.launch_passive(model, data) as viewer:
+
+        # Playback state (must be defined before launch_passive for key_callback)
+        num_frames = len(trajectory)
+        playback = {"paused": False, "step": False, "frame": 0, "smplx_frame": 0}
+
+        def key_callback(keycode):
+            # Space = 32: toggle pause
+            if keycode == 32:
+                playback["paused"] = not playback["paused"]
+                print(f"{'Paused' if playback['paused'] else 'Resumed'} at frame {playback['frame']}/{num_frames}")
+            # Right arrow = 262: step forward
+            elif keycode == 262:
+                playback["step"] = True
+                playback["paused"] = True
+            # Left arrow = 263: step backward
+            elif keycode == 263:
+                playback["frame"] = (playback["frame"] - 2) % num_frames
+                if smplx_trajectory is not None:
+                    playback["smplx_frame"] = (playback["smplx_frame"] - 2) % len(smplx_trajectory)
+                playback["step"] = True
+                playback["paused"] = True
+
+        with mujoco.viewer.launch_passive(model, data, key_callback=key_callback) as viewer:
             # Configure viewer for better visibility
             # Try to access scene for background color and rendering settings
             scene = None
@@ -305,13 +332,11 @@ def visualize_trajectory(urdf_path, trajectory, smplx_trajectory=None, terrain_m
             viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_STATIC] = 1      # Show static bodies
             
             num_frames = len(trajectory)
-            frame_idx = 0
-            smplx_frame_idx = 0
-            
+
             # Playback speed control
             fps = 30.0
             dt = 1.0 / fps
-            
+
             # Setup SMPLX joint visualization (spheres) if provided
             smplx_geoms_base = None
             smplx_num_joints = 0
@@ -332,29 +357,35 @@ def visualize_trajectory(urdf_path, trajectory, smplx_trajectory=None, terrain_m
 
             while viewer.is_running():
                 step_start = time.time()
-                
+
                 # Update background color every frame (some viewers need this)
                 if scene is not None and hasattr(scene, 'rgba_background'):
                     scene.rgba_background[:] = [0.9, 0.9, 0.95, 1.0]
-                
+
+                if playback["paused"] and not playback["step"]:
+                    viewer.sync()
+                    time.sleep(dt)
+                    continue
+                playback["step"] = False
+
                 # Update state
-                data.qpos[:] = trajectory[frame_idx]
+                data.qpos[:] = trajectory[playback["frame"]]
                 mujoco.mj_forward(model, data)
 
                 # Update SMPLX joint markers
                 if smplx_geoms_base is not None:
-                    smplx_joints = smplx_trajectory[smplx_frame_idx]
+                    smplx_joints = smplx_trajectory[playback["smplx_frame"]]
                     for i in range(smplx_num_joints):
                         scene.geoms[smplx_geoms_base + i].pos = smplx_joints[i]
-                
+
                 # Advance frame
-                frame_idx = (frame_idx + 1) % num_frames
+                playback["frame"] = (playback["frame"] + 1) % num_frames
                 if smplx_trajectory is not None:
-                    smplx_frame_idx = (smplx_frame_idx + 1) % len(smplx_trajectory)
-                
+                    playback["smplx_frame"] = (playback["smplx_frame"] + 1) % len(smplx_trajectory)
+
                 # Sync viewer
                 viewer.sync()
-                
+
                 # Sleep to maintain frame rate
                 time_until_next_step = dt - (time.time() - step_start)
                 if time_until_next_step > 0:
@@ -504,11 +535,10 @@ def main():
 
         # Perform retargeting
         print("Retargeting motion...")
-        enable_terrain_scaling = bool(args.output_scaled_terrain)
         terrain_scale, retargeted_motion = retargeter.retarget_motion(
             smplx_trajectory,
+            framerate=framerate,
             visualize_trajectory=args.vis,
-            enable_terrain_scaling=enable_terrain_scaling,
         )
 
         if args.output_scaled_terrain:
@@ -560,8 +590,7 @@ def main():
         if (args.vis or args.save_video) and terrain_path and os.path.exists(terrain_path):
             try:
                 vis_terrain = trimesh.load(terrain_path, force='mesh')
-                if args.output_scaled_terrain:
-                    vis_terrain.apply_scale(terrain_scale)
+                vis_terrain.apply_scale(terrain_scale)
             except Exception as e:
                 print(f"Could not load terrain for visualization: {e}")
 

@@ -554,9 +554,9 @@ class GenericInteractionRetargeter:
             dqa <= (self.q_a_ub - q_a_current),
         ])
 
-        # Non-penetration constraints (self-collision + terrain)
-        penetration_constraints = self._compute_penetration_constraints(q, dqa)
-        constraints.extend(penetration_constraints)
+        # Non-penetration constraints (self-collision + terrain) — disabled
+        # penetration_constraints = self._compute_penetration_constraints(q, dqa)
+        # constraints.extend(penetration_constraints)
 
         # Trust region
         constraints.append(cp.SOC(self.step_size, dqa))
