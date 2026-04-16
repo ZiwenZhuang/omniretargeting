@@ -407,7 +407,7 @@ class OmniRetargeter:
             terrain_sample_points=int(self.retargeting_config.get("terrain_sample_points", 100)),
             valid_joint_names=self.valid_joint_names,  # CRITICAL: Pass ordered joint names for consistency
             replace_cylinders_with_capsules=bool(self.retargeting_config.get("replace_cylinders_with_capsules", False)),
-            penetration_resolver=str(self.retargeting_config.get("penetration_resolver", "hard_constraint")),
+            hard_penetration_constraint=self.retargeting_config.get("penetration_resolver", "hard_constraint") == "hard_constraint",
         )
 
         # Retarget each frame

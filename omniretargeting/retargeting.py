@@ -9,7 +9,7 @@ from scipy import sparse as sp
 from scipy.spatial import Delaunay
 from scipy.spatial.transform import Rotation
 import trimesh
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Any, Dict, List, Optional, Tuple
 from pathlib import Path
 import yourdfpy
 
@@ -49,7 +49,7 @@ class GenericInteractionRetargeter:
         terrain_sample_points: int = 100,
         valid_joint_names: Optional[List[str]] = None,
         replace_cylinders_with_capsules: bool = False,
-        penetration_resolver: str = "hard_constraint",
+        hard_penetration_constraint: bool = False,
     ):
         """Initialize the generic retargeter.
 
@@ -71,20 +71,16 @@ class GenericInteractionRetargeter:
                 IsaacLab/PhysX convention where ``replace_cylinders_with_capsules=True``
                 is commonly used, ensuring that the retargeted motion is checked against
                 the same collision shapes used in downstream simulation.
-            penetration_resolver: Contact handling mode. ``hard_constraint`` keeps
-                penetration constraints inside the optimizer, while ``xyz_nudge``
-                skips those constraints so post-processing can correct contacts later.
+            hard_penetration_constraint: If True, enforce penetration
+                constraints inside the optimizer. If False, skip them so
+                outer post-processing can handle contact correction.
         """
         self.robot_model = robot_model
         self.robot_data = robot_data
         self.terrain_mesh = terrain_mesh
         self.joint_mapping = joint_mapping  # This should already be filtered to valid joints only
         self.robot_height = robot_height
-        self.penetration_resolver = penetration_resolver
-        if self.penetration_resolver not in {"hard_constraint", "xyz_nudge"}:
-            raise ValueError(
-                "penetration_resolver must be one of ['hard_constraint', 'xyz_nudge']"
-            )
+        self.hard_penetration_constraint = hard_penetration_constraint
         
         # CRITICAL: Store ordered joint names to ensure consistent ordering
         # This ensures human_joints[i] matches robot_points[i] for all i
@@ -538,7 +534,7 @@ class GenericInteractionRetargeter:
         ])
 
         # Non-penetration constraints (self-collision + terrain)
-        if self.penetration_resolver == "hard_constraint":
+        if self.hard_penetration_constraint:
             penetration_constraints = self._compute_penetration_constraints(q, dqa)
             constraints.extend(penetration_constraints)
 

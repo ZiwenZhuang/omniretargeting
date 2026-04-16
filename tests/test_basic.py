@@ -530,7 +530,7 @@ def test_retarget_motion_skips_foot_stabilization_for_hard_constraint():
     retargeter._apply_foot_stabilization.assert_not_called()
 
 
-def test_perform_retargeting_passes_penetration_resolver():
+def test_perform_retargeting_passes_hard_penetration_constraint():
     from omniretargeting import OmniRetargeter
     from unittest.mock import patch
 
@@ -571,7 +571,7 @@ def test_perform_retargeting_passes_penetration_resolver():
         terrain_sample_points=123,
         valid_joint_names=["Pelvis"],
         replace_cylinders_with_capsules=True,
-        penetration_resolver="xyz_nudge",
+        hard_penetration_constraint=False,
     )
 
 @pytest.mark.parametrize(("robot_name", "profile_path"), ROBOT_PROFILE_CASES)
