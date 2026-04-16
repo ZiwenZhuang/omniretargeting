@@ -17,7 +17,8 @@ setup(
         "trimesh",
         "smplx",
         "jinja2",
-        "mujoco",
+        # Due to mujoco `strippath` default value in URDF parsing updated, `strippath=false` by default.
+        "mujoco>=3.7.0",
         "viser",
         "robot_descriptions",
         "yourdfpy",
