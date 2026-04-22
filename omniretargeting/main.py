@@ -391,7 +391,7 @@ def main():
     parser.add_argument("--framerate", type=float, default=None, help="Framerate of the motion (optional, defaults to 30.0 or auto-detected)")
     parser.add_argument("--replace-cylinders-with-capsules", dest="replace_cylinders_with_capsules", action="store_true", default=False,
                         help="Replace cylinder collision geoms with capsules to match IsaacLab/PhysX convention.")
-    parser.add_argument("--penetration-resolver", choices=["hard_constraint", "xyz_nudge"], default=None,
+    parser.add_argument("--penetration-resolver", choices=["hard_constraint", "xyz_nudge"], default="xyz_nudge",
                         help="Override the contact handling mode for retargeting.")
     
     args = parser.parse_args()
