@@ -460,6 +460,120 @@ def test_retarget_motion_applies_terrain_scale_when_enabled():
         base_translations=None,
     )
 
+
+def test_retarget_motion_applies_foot_stabilization_for_xyz_nudge():
+    from omniretargeting import OmniRetargeter
+
+    original_terrain_copy = Mock(name="original_terrain_copy")
+    processed_trajectory = np.full((2, 22, 3), 7.0, dtype=float)
+    raw_motion = np.array([[1.0, 2.0, 3.0]])
+    stabilized_motion = np.array([[1.5, 2.5, 3.5]])
+
+    retargeter = OmniRetargeter.__new__(OmniRetargeter)
+    retargeter.terrain_mesh = Mock()
+    retargeter.terrain_mesh.copy.return_value = original_terrain_copy
+    retargeter.retargeting_config = {"penetration_resolver": "xyz_nudge"}
+    retargeter._compute_terrain_scale = Mock(return_value=2.5)
+    retargeter._scale_terrain_mesh = Mock()
+    retargeter._process_smplx_trajectory = Mock(return_value=processed_trajectory)
+    retargeter._perform_retargeting = Mock(return_value=raw_motion)
+    retargeter._apply_foot_stabilization = Mock(return_value=stabilized_motion)
+    retargeter._visualize_trajectory = Mock()
+
+    smplx_trajectory = np.ones((2, 22, 3), dtype=float)
+
+    terrain_scale, retargeted_motion = retargeter.retarget_motion(
+        smplx_trajectory,
+        framerate=60.0,
+        visualize_trajectory=False,
+        enable_terrain_scaling=False,
+    )
+
+    assert terrain_scale == 1.0
+    assert retargeted_motion is stabilized_motion
+    retargeter._apply_foot_stabilization.assert_called_once_with(
+        raw_motion,
+        original_terrain_copy,
+        framerate=60.0,
+    )
+
+
+def test_retarget_motion_skips_foot_stabilization_for_hard_constraint():
+    from omniretargeting import OmniRetargeter
+
+    original_terrain_copy = Mock(name="original_terrain_copy")
+    processed_trajectory = np.full((2, 22, 3), 7.0, dtype=float)
+    raw_motion = np.array([[1.0, 2.0, 3.0]])
+
+    retargeter = OmniRetargeter.__new__(OmniRetargeter)
+    retargeter.terrain_mesh = Mock()
+    retargeter.terrain_mesh.copy.return_value = original_terrain_copy
+    retargeter.retargeting_config = {"penetration_resolver": "hard_constraint"}
+    retargeter._compute_terrain_scale = Mock(return_value=2.5)
+    retargeter._scale_terrain_mesh = Mock()
+    retargeter._process_smplx_trajectory = Mock(return_value=processed_trajectory)
+    retargeter._perform_retargeting = Mock(return_value=raw_motion)
+    retargeter._apply_foot_stabilization = Mock()
+    retargeter._visualize_trajectory = Mock()
+
+    smplx_trajectory = np.ones((2, 22, 3), dtype=float)
+
+    terrain_scale, retargeted_motion = retargeter.retarget_motion(
+        smplx_trajectory,
+        framerate=60.0,
+        visualize_trajectory=False,
+        enable_terrain_scaling=False,
+    )
+
+    assert terrain_scale == 1.0
+    assert retargeted_motion is raw_motion
+    retargeter._apply_foot_stabilization.assert_not_called()
+
+
+def test_perform_retargeting_passes_hard_penetration_constraint():
+    from omniretargeting import OmniRetargeter
+    from unittest.mock import patch
+
+    robot_model = Mock()
+    robot_model.nq = 7
+    robot_model.njnt = 0
+    robot_data = Mock()
+    processed_trajectory = np.zeros((0, 22, 3), dtype=float)
+    scaled_terrain = Mock()
+
+    retargeter = OmniRetargeter.__new__(OmniRetargeter)
+    retargeter.robot_model = robot_model
+    retargeter.robot_data = robot_data
+    retargeter.valid_joint_mapping = {"Pelvis": "pelvis"}
+    retargeter.robot_height = 1.0
+    retargeter.retargeting_config = {
+        "collision_detection_threshold": 0.2,
+        "terrain_sample_points": 123,
+        "replace_cylinders_with_capsules": True,
+        "penetration_resolver": "xyz_nudge",
+    }
+    retargeter.valid_joint_names = ["Pelvis"]
+    retargeter.base_orientation_config = {}
+
+    with patch("omniretargeting.retargeting.GenericInteractionRetargeter") as retargeter_cls:
+        retargeter_instance = Mock()
+        retargeter_cls.return_value = retargeter_instance
+        result = retargeter._perform_retargeting(processed_trajectory, scaled_terrain)
+
+    assert result.shape == (0,)
+    retargeter_cls.assert_called_once_with(
+        robot_model,
+        robot_data,
+        scaled_terrain,
+        {"Pelvis": "pelvis"},
+        1.0,
+        collision_detection_threshold=0.2,
+        terrain_sample_points=123,
+        valid_joint_names=["Pelvis"],
+        replace_cylinders_with_capsules=True,
+        hard_penetration_constraint=False,
+    )
+
 @pytest.mark.parametrize(("robot_name", "profile_path"), ROBOT_PROFILE_CASES)
 def test_tpose_retargeting_alignment(robot_name: str, profile_path: Path):
     """

@@ -391,6 +391,8 @@ def main():
     parser.add_argument("--framerate", type=float, default=None, help="Framerate of the motion (optional, defaults to 30.0 or auto-detected)")
     parser.add_argument("--replace-cylinders-with-capsules", dest="replace_cylinders_with_capsules", action="store_true", default=False,
                         help="Replace cylinder collision geoms with capsules to match IsaacLab/PhysX convention.")
+    parser.add_argument("--penetration-resolver", choices=["hard_constraint", "xyz_nudge"], default="xyz_nudge",
+                        help="Override the contact handling mode for retargeting.")
     
     args = parser.parse_args()
 
@@ -440,6 +442,8 @@ def main():
         retargeting = {}
     if args.replace_cylinders_with_capsules:
         retargeting["replace_cylinders_with_capsules"] = True
+    if args.penetration_resolver is not None:
+        retargeting["penetration_resolver"] = args.penetration_resolver
 
     # Handle terrain
     temp_terrain_path = None
@@ -507,6 +511,7 @@ def main():
         enable_terrain_scaling = bool(args.output_scaled_terrain)
         terrain_scale, retargeted_motion = retargeter.retarget_motion(
             smplx_trajectory,
+            framerate=framerate,
             visualize_trajectory=args.vis,
             enable_terrain_scaling=enable_terrain_scaling,
         )

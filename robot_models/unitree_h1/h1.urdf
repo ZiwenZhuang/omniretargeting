@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <robot name="h1_description">
   <mujoco>
-    <compiler meshdir="meshes" discardvisual="false"/>
+    <compiler meshdir="./" discardvisual="false"/>
   </mujoco>
 
 

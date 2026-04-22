@@ -54,13 +54,17 @@ if smplx_orientations is not None:
 else:
     print("Orientations not available for this file format")
 
-# Define joint mapping from SMPLX to robot
+# Define joint mapping from SMPLX joint names to robot BODY (link) names.
+# Keys must be SMPLX joint names in the capitalized convention used by
+# omniretargeting (see the full list under "Joint Mapping" below).
 joint_mapping = {
-    "root": "pelvis",
-    "left_hip": "left_hip_pitch",
-    "right_hip": "right_hip_pitch",
-    "left_knee": "left_knee_pitch",
-    "right_knee": "right_knee_pitch",
+    "Pelvis": "pelvis",
+    "L_Hip": "left_hip_roll_link",
+    "R_Hip": "right_hip_roll_link",
+    "L_Knee": "left_knee_link",
+    "R_Knee": "right_knee_link",
+    "L_Ankle": "left_ankle_roll_link",
+    "R_Ankle": "right_ankle_roll_link",
     # ... add more mappings as needed
 }
 
@@ -68,17 +72,40 @@ joint_mapping = {
 retargeter = OmniRetargeter(
     robot_urdf_path=robot_urdf,
     terrain_mesh_path=terrain_mesh,
-    joint_mapping=joint_mapping
+    joint_mapping=joint_mapping,
 )
 
 # Perform retargeting
 terrain_scale, retargeted_motion = retargeter.retarget_motion(
     smplx_trajectory,
+    framerate=30.0,
     enable_terrain_scaling=True,
+    visualize_trajectory=False,
 )
 
 print(f"Terrain scale factor: {terrain_scale}")
 print(f"Retargeted motion shape: {retargeted_motion.shape}")  # (T, 7 + DOF)
+```
+
+For a ready-to-run setup, omniretargeting ships with a Unitree G1 profile
+(`robot_models/unitree_g1/unitree_g1.json`) that already contains a full joint
+mapping, height/orientation helpers, and foot-stabilization settings. Use it
+via the CLI (see below) or by loading the profile directly:
+
+```python
+from omniretargeting import OmniRetargeter, load_robot_config
+
+cfg = load_robot_config("robot_models/unitree_g1/unitree_g1.json")
+retargeter = OmniRetargeter(
+    robot_urdf_path=cfg["urdf_path"],
+    terrain_mesh_path="path/to/terrain.obj",
+    joint_mapping=cfg["joint_mapping"],
+    robot_height=cfg.get("robot_height"),
+    smplx_joint_names=cfg.get("smplx_joint_names"),
+    height_estimation=cfg.get("height_estimation"),
+    base_orientation=cfg.get("base_orientation"),
+    retargeting=cfg.get("retargeting"),
+)
 ```
 
 ## Input Format
@@ -142,20 +169,40 @@ The function **always returns a tuple** `(positions, orientations)`:
 - Will be `None` if orientations cannot be computed (e.g., .npy files with positions only)
 
 ### Joint Mapping
-A dictionary mapping SMPLX joint names to robot link names:
+A dictionary mapping SMPLX joint names (keys) to robot **body/link** names (values) as they appear in the URDF:
 
 ```python
 joint_mapping = {
-    "root": "pelvis",           # Root joint
-    "left_hip": "left_hip_pitch",
-    "right_hip": "right_hip_pitch",
-    "left_knee": "left_knee_pitch",
-    "right_knee": "right_knee_pitch",
-    "left_ankle": "left_ankle_pitch",
-    "right_ankle": "right_ankle_pitch",
-    # Add more joints as available
+    "Pelvis": "pelvis",
+    "L_Hip": "left_hip_roll_link",
+    "R_Hip": "right_hip_roll_link",
+    "Spine1": "waist_yaw_link",
+    "L_Knee": "left_knee_link",
+    "R_Knee": "right_knee_link",
+    "L_Ankle": "left_ankle_roll_link",
+    "R_Ankle": "right_ankle_roll_link",
+    "L_Shoulder": "left_shoulder_roll_link",
+    "R_Shoulder": "right_shoulder_roll_link",
+    "L_Elbow": "left_elbow_link",
+    "R_Elbow": "right_elbow_link",
+    "L_Wrist": "left_wrist_yaw_link",
+    "R_Wrist": "right_wrist_yaw_link",
 }
 ```
+
+The default SMPLX joint ordering used by `OmniRetargeter` (first 22 body joints) is:
+
+```
+Pelvis, L_Hip, R_Hip, Spine1, L_Knee, R_Knee, Spine2, L_Ankle, R_Ankle,
+Spine3, L_Foot, R_Foot, Neck, L_Collar, R_Collar, Head, L_Shoulder,
+R_Shoulder, L_Elbow, R_Elbow, L_Wrist, R_Wrist
+```
+
+You can override this list via the `smplx_joint_names` argument (or the
+`smplx_joint_names` field in a robot profile JSON). Any SMPLX key in
+`joint_mapping` must be present in `smplx_joint_names`, and the mapped value
+must match a body name in the robot URDF; unresolved entries are filtered out
+with a warning at initialization.
 
 ### Terrain Mesh
 Supports common mesh formats:
@@ -164,30 +211,48 @@ Supports common mesh formats:
 - `.ply` (Polygon File Format)
 - `.gltf`/`.glb` (glTF)
 
-1. **Optional Terrain Scaling**: The terrain mesh remains unscaled by default. If `--output-scaled-terrain` is provided, OmniRetargeting computes a terrain scale factor, retargets against the scaled terrain mesh, and writes that scaled mesh to disk.
+**Optional Terrain Scaling**: the terrain mesh is unscaled by default. If `enable_terrain_scaling=True` is passed to `retarget_motion()` (or `--output-scaled-terrain` is set on the CLI), OmniRetargeting computes a terrain scale factor from the robot/human height ratio and retargets against the scaled mesh.
 
 ### Robot URDF
 Standard URDF format for humanoid robots. The system automatically:
-- Detects robot height and dimensions
-- Identifies joint limits and types
-- Sets up collision detection
+- Detects robot height from the default pose (overridable via `robot_height`)
+- Reads joint limits and types from the URDF
+- Loads visual meshes for (optional) visualization
 
 ## Output Format
 
-The `retarget_motion()` method returns a tuple:
+### `retarget_motion()` return value
 
 ```python
 terrain_scale, retargeted_motion = retargeter.retarget_motion(
     smplx_trajectory,
+    framerate=30.0,
     enable_terrain_scaling=True,
 )
 ```
 
-- **`terrain_scale`**: `1.0` by default, or the computed terrain scaling factor when terrain scaling is enabled
+- **`terrain_scale`**: `1.0` by default, or the computed terrain scaling factor when `enable_terrain_scaling=True`.
 - **`retargeted_motion`**: Numpy array of shape `(T, 7 + DOF)` containing:
   - `[0:3]`: Root position (x, y, z)
-  - `[3:7]`: Root quaternion (w, x, y, z)
+  - `[3:7]`: Root quaternion in **wxyz** order (MuJoCo convention)
   - `[7:]`: Joint angles in radians
+
+### CLI `.npz` schema
+
+`python -m omniretargeting.main --output my_motion.npz ...` writes a `.npz`
+containing the following keys (the output filename is also normalized to end
+with `_retargeted.npz` if it doesn't already):
+
+| Key            | Shape      | Description                                     |
+|----------------|------------|-------------------------------------------------|
+| `framerate`    | scalar     | Motion framerate (from file or `--framerate`).  |
+| `joint_names`  | `(DOF,)`   | Robot joint names (excluding the floating base). |
+| `joint_pos`    | `(T, DOF)` | Joint angles in radians.                         |
+| `base_pos_w`   | `(T, 3)`   | Root position in world frame.                    |
+| `base_quat_w`  | `(T, 4)`   | Root quaternion in world frame (wxyz).           |
+
+If `--output-scaled-terrain` is provided, the scaled terrain mesh used for
+retargeting is exported to that path as well.
 
 ## Advanced Usage
 
@@ -202,30 +267,62 @@ retargeter = OmniRetargeter(
 )
 ```
 
-### Robot Profile Config (Per-Humanoid)
+### CLI
 
-You can keep one JSON profile per humanoid robot (for example under `robot_models/<robot_name>/`) and feed it to the CLI:
+The CLI is driven by a per-robot JSON profile. The URDF path, joint mapping,
+and retargeting settings all come from the profile — the CLI does **not**
+accept a separate URDF argument.
 
 ```bash
 python -m omniretargeting.main \
   --robot-config robot_models/unitree_g1/unitree_g1.json \
   --smplx_model_dir /path/to/smplx/models \
-  --smplx_motion /path/to/motion.npz \
+  --smplx_motion /path/to/motion_stageii.npz \
   --terrain /path/to/terrain.obj \
   --output /path/to/output.npz \
-  --output-scaled-terrain /path/to/scaled-terrain.obj
+  --output-scaled-terrain /path/to/scaled-terrain.obj \
+  --framerate 30 \
+  --penetration-resolver xyz_nudge
 ```
 
-`--robot-config` defaults to `robot_models/unitree_g1/unitree_g1.json`. The robot URDF path must be set as `urdf_path` in that JSON profile (the CLI does not accept a separate URDF argument).
+Main arguments:
 
-Profile fields can include:
-- `joint_mapping`
-- `urdf_path`
-- `robot_height`
-- `smplx_joint_names`
-- `height_estimation`
-- `base_orientation`
-- `retargeting`
+| Flag | Default | Description |
+|---|---|---|
+| `--robot-config` | `robot_models/unitree_g1/unitree_g1.json` | Path to robot profile JSON. |
+| `--smplx_model_dir` | *(required)* | Directory containing SMPLX model files. |
+| `--smplx_motion` | *(required)* | Path to SMPLX motion file (`.npz`). |
+| `--output` | *(required)* | Output `.npz` path (normalized to end in `_retargeted.npz`). |
+| `--terrain` | flat ground | Path to terrain mesh; a default flat terrain is generated if omitted. |
+| `--output-scaled-terrain` | `None` | If set, enables terrain scaling and exports the scaled mesh. |
+| `--mapping` | profile | Overrides the profile's `joint_mapping` with an external JSON file. |
+| `--framerate` | auto / 30 | Motion framerate; auto-detected from the SMPLX file when possible. |
+| `--vis` | off | Launch a MuJoCo viewer on the retargeted motion. |
+| `--save-video PATH` | off | Render the retargeted motion to video (requires `imageio[ffmpeg]`, and `MUJOCO_GL=egl`/`osmesa` for headless). |
+| `--replace-cylinders-with-capsules` | off | Swap cylinder collision geoms for capsules (IsaacLab/PhysX convention). |
+| `--penetration-resolver {hard_constraint,xyz_nudge}` | `xyz_nudge` | Contact handling mode; overrides the value in the profile. |
+
+### Robot Profile Config (Per-Humanoid)
+
+Keep one JSON profile per humanoid robot (for example under
+`robot_models/<robot_name>/`). Relative `urdf_path` values are resolved against
+the profile file's directory.
+
+Supported top-level fields:
+
+- `name` – optional profile name, used in log output
+- `urdf_path` – **required**, path to the robot URDF (relative to the profile file)
+- `joint_mapping` – **required**, SMPLX joint name → robot body name
+- `robot_height` – optional override for auto-detected robot height
+- `smplx_joint_names` – optional custom SMPLX joint ordering
+- `height_estimation` – head/foot joint names and `head_top_offset` used to estimate human height
+- `base_orientation` – SMPLX joint names used to estimate root orientation (`pelvis`, `left_hip`, `right_hip`, `spine`)
+- `retargeting` – solver settings forwarded to `GenericInteractionRetargeter`:
+  - `collision_detection_threshold`
+  - `terrain_sample_points`
+  - `replace_cylinders_with_capsules`
+  - `penetration_resolver`: `"hard_constraint"` or `"xyz_nudge"`
+  - `foot_stabilization`: nested block (see `robot_models/unitree_g1/unitree_g1.json`) that controls the post-processing XYZ-nudge pass (`enabled`, `clearance`, `surface_clearance`, `contact_clearance`, `xy_correction_gain`, smoothing windows, wall-contact thresholds, etc.)
 
 ### Validation
 
@@ -240,20 +337,6 @@ print(f"Robot DOF: {retargeter.get_robot_dof()}")
 print(f"Joint names: {retargeter.get_joint_names()}")
 ```
 
-## Examples
-
-See the `examples/` directory for complete usage examples:
-
-- `basic_usage.py`: Simple API demonstration and trajectory visualization
-- `advanced_usage.py`: Advanced features, validation, and motion comparisons
-
-Run examples with:
-
-```bash
-python examples/basic_usage.py
-python examples/advanced_usage.py
-```
-
 ## Running Tests
 
 ```bash
@@ -264,52 +347,88 @@ pytest tests/
 
 ### `OmniRetargeter`
 
-Main class for motion retargeting.
+Main class for motion retargeting (defined in `omniretargeting/core.py`).
 
 #### Constructor
 ```python
-OmniRetargeter(robot_urdf_path, terrain_mesh_path, joint_mapping, robot_height=None)
+OmniRetargeter(
+    robot_urdf_path,
+    terrain_mesh_path,
+    joint_mapping,
+    robot_height=None,
+    smplx_joint_names=None,
+    height_estimation=None,
+    base_orientation=None,
+    retargeting=None,
+)
 ```
 
 #### Methods
 
-- `retarget_motion(smplx_trajectory, terrain_coordinates=None)` → `(terrain_scale, retargeted_motion)`
+- `retarget_motion(smplx_trajectory, base_orientations=None, base_translations=None, framerate=None, visualize_trajectory=True, enable_terrain_scaling=False)` → `(terrain_scale, retargeted_motion)`
 - `get_robot_dof()` → `int`
 - `get_joint_names()` → `List[str]`
-- `validate_joint_mapping()` → `List[str]`
+- `validate_joint_mapping()` → `List[str]` (robot body names from `joint_mapping` that are missing from the URDF)
+
+### `load_robot_config`
+
+```python
+from omniretargeting import load_robot_config
+cfg = load_robot_config("robot_models/unitree_g1/unitree_g1.json")
+```
+
+Loads a robot profile JSON and resolves `urdf_path` relative to the profile
+file. Raises if `joint_mapping` is missing or empty.
+
+### `load_smplx_trajectory`
+
+```python
+from omniretargeting.utils import load_smplx_trajectory
+positions, orientations = load_smplx_trajectory(
+    smplx_file=Path("motion_stageii.npz"),
+    smplx_model_directory="/path/to/smplx/models",
+    gender="neutral",
+)
+```
+
+Always returns `(positions, orientations)` (orientations may be `None` for
+`.npy` files). Pass `return_meta=True` to additionally receive the raw
+`root_orient` and `trans` arrays.
 
 ## Dependencies
 
-- numpy
+Declared in `pyproject.toml` / `setup.py`:
+
+- numpy, scipy, matplotlib, tqdm
 - torch
-- scipy
-- matplotlib
-- trimesh
-- smplx
-- mujoco
-- viser
-- yourdfpy
-- cvxpy
-- libigl
-- open3d
-- pyvista
+- trimesh, smplx, jinja2
+- mujoco (≥3.7 for URDF `strippath=false` default)
+- viser, yourdfpy, robot_descriptions
+- cvxpy, libigl, tyro
+- open3d, pyvista
 
 ## Architecture
 
-OmniRetargeting adapts the interaction mesh retargeting approach from the holosoma_retargeting project to work with generic robots and terrains:
+OmniRetargeting adapts the interaction-mesh retargeting approach from the
+holosoma_retargeting project to work with generic robots and terrains:
 
-1. **Terrain Scaling**: Automatically scales terrain mesh to match SMPLX motion scale
-2. **Generic Robot Support**: Works with any URDF through automatic model loading and analysis
-3. **Interaction Mesh**: Creates tetrahedral mesh from human joints and terrain points
-4. **Optimization**: Uses SQP optimization with Laplacian deformation constraints
-5. **Collision Avoidance**: Terrain penetration constraints (not yet implemented; see TODO below)
-6. **Joint Limits**: Respects robot joint limits during optimization
+1. **Terrain Scaling** (optional): Scales the terrain mesh by the robot-to-human height ratio before retargeting (enabled by `enable_terrain_scaling=True` or `--output-scaled-terrain`).
+2. **Generic Robot Support**: Works with any URDF through automatic model loading, body-name validation, and auto-detected height.
+3. **Interaction Mesh**: Builds a tetrahedral interaction mesh from mapped human joints and terrain sample points.
+4. **Optimization**: Per-frame SQP optimization with Laplacian-deformation objective, joint limits, and a target base-orientation term for smoothness.
+5. **Collision / Penetration Handling**: Two modes selectable via `retargeting.penetration_resolver`:
+   - `hard_constraint` – penetration inequalities inside the SQP.
+   - `xyz_nudge` – post-optimization foot stabilization that projects probe points out of the terrain and smooths XY drift (see `foot_stabilization` in the profile).
+6. **Joint Limits**: Respects robot joint limits throughout.
 
-## TODO / Limitations
+## Limitations
 
-- **Penetration constraint**: The terrain penetration constraint is not yet implemented. The optimization framework has the `_compute_penetration_constraints` method and collision detection scaffolding, but they are currently disabled (`retargeting.py`, lines 520–524) because collision detection setup is incomplete. As a result, retargeted motion may exhibit foot–terrain penetration in some cases.
-- **Scaled terrain export**: The current CLI saves retargeted motion to `.npz` but does not persist the scaled terrain mesh to disk. Future work: add an optional argument (for example `--output_scaled_terrain`) to export the scaled terrain mesh used during retargeting.
-- Other known TODOs: proper coordinate system alignment (`utils.py`), collision pair setup (`_setup_collision_detection` in `retargeting.py`).
+- **Coordinate-system alignment**: A TODO remains in `utils.py` for a more
+  principled SMPLX → world coordinate transformation; the current pipeline
+  assumes the SMPLX trajectory is already in a +Z-up world frame.
+- **Foot stabilization tuning**: The `xyz_nudge` resolver is effective on flat
+  and mildly uneven terrain but may need per-robot tuning
+  (`foot_stabilization` block in the profile) for complex scenes with walls.
 
 ## Contributing
 
@@ -323,7 +442,7 @@ We welcome contributions! Please:
 
 ## License
 
-This project is licensed under the Apache 2.0 License.
+This project is licensed under the MIT License. See [`LICENSE`](LICENSE) for the full text.
 
 ## Citation
 

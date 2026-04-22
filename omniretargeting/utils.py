@@ -88,18 +88,49 @@ def compute_mesh_height_at_point(mesh: trimesh.Trimesh, x: float, y: float) -> f
     ray_origin = np.array([x, y, 100.0])  # High z value
     ray_direction = np.array([0, 0, -1])  # Downward
 
-    # Find intersections with the mesh
-    locations, _, _ = mesh.ray.intersects_location(
-        ray_origins=[ray_origin],
-        ray_directions=[ray_direction]
-    )
+    try:
+        # Find intersections with the mesh using trimesh acceleration if available.
+        locations, _, _ = mesh.ray.intersects_location(
+            ray_origins=[ray_origin],
+            ray_directions=[ray_direction]
+        )
+        if len(locations) > 0:
+            # Return the highest intersection point (closest to the ray origin)
+            return float(np.max(locations[:, 2]))
+    except Exception:
+        # Fall back to a dependency-free triangle walk when rtree/pyembree is unavailable.
+        pass
 
-    if len(locations) == 0:
-        # No intersection found, return a default height
-        return 0.0
+    # Fallback: solve height against every triangle in XY projection.
+    # This is slower than the ray query but avoids optional spatial index dependencies.
+    triangles = np.asarray(mesh.triangles, dtype=float)
+    point_xy = np.array([x, y], dtype=float)
+    heights = []
+    epsilon = 1e-9
 
-    # Return the highest intersection point (closest to the ray origin)
-    return locations[0][2]
+    for tri in triangles:
+        a_xy, b_xy, c_xy = tri[:, :2]
+        v0 = b_xy - a_xy
+        v1 = c_xy - a_xy
+        v2 = point_xy - a_xy
+
+        denom = v0[0] * v1[1] - v1[0] * v0[1]
+        if abs(denom) < epsilon:
+            continue
+
+        inv_denom = 1.0 / denom
+        u = (v2[0] * v1[1] - v1[0] * v2[1]) * inv_denom
+        v = (v0[0] * v2[1] - v2[0] * v0[1]) * inv_denom
+        w = 1.0 - u - v
+
+        if u >= -epsilon and v >= -epsilon and w >= -epsilon:
+            heights.append(u * tri[1, 2] + v * tri[2, 2] + w * tri[0, 2])
+
+    if heights:
+        return float(max(heights))
+
+    # No intersection found, return a default height.
+    return 0.0
 
 
 def align_terrain_to_coordinates(mesh: trimesh.Trimesh,
