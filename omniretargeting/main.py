@@ -204,7 +204,35 @@ def save_trajectory_video(urdf_path, trajectory, output_path, smplx_trajectory=N
                 return
 
         data = mujoco.MjData(model)
-        renderer = mujoco.Renderer(model, height, width)
+        from mujoco.rendering.classic.renderer import Renderer
+        renderer = Renderer(model, height, width)
+
+        # Brighten the scene for video rendering
+        model.vis.headlight.ambient[:] = [0.7, 0.7, 0.7]
+        model.vis.headlight.diffuse[:] = [0.7, 0.7, 0.7]
+        model.vis.headlight.specular[:] = [0.4, 0.4, 0.4]
+        model.vis.map.znear = 0.001
+        model.vis.map.zfar = 50.0
+
+        # Access renderer's scene for background and skybox/fog settings
+        scene = None
+        if hasattr(renderer, 'scene'):
+            scene = renderer.scene
+        elif hasattr(renderer, '_scene'):
+            scene = renderer._scene
+        else:
+            # Try to get scene via model.vis.global_ or other path
+            print("Note: Could not access renderer scene for background customization")
+
+        if scene is not None:
+            try:
+                scene.flags[mujoco.mjtRndFlag.mjRND_SKYBOX] = 0
+                scene.flags[mujoco.mjtRndFlag.mjRND_FOG] = 0
+                if hasattr(scene, 'rgba_background'):
+                    scene.rgba_background[:] = [0.9, 0.9, 0.95, 1.0]
+                print("Video scene lighting customized successfully")
+            except (AttributeError, TypeError) as e:
+                print(f"Could not customize renderer scene: {e}")
 
         cam = mujoco.MjvCamera()
         cam.type = mujoco.mjtCamera.mjCAMERA_FREE
