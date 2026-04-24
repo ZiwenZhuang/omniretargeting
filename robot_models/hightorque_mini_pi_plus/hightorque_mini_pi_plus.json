@@ -1,0 +1,61 @@
+{
+  "name": "hightorque_mini_pi_plus",
+  "urdf_path": "PiPlus_S_12L8A0G2H1W.urdf",
+  "joint_mapping": {
+    "Pelvis": "base_link",
+    "L_Hip": "l_hip_roll_link",
+    "R_Hip": "r_hip_roll_link",
+    "Spine1": "torso_link",
+    "L_Knee": "l_calf_link",
+    "R_Knee": "r_calf_link",
+    "L_Ankle": "l_ankle_pitch_link",
+    "R_Ankle": "r_ankle_pitch_link",
+    "L_Foot": "l_ankle_roll_link",
+    "R_Foot": "r_ankle_roll_link",
+    "Head": "head_pitch_link",
+    "L_Shoulder": "l_shoulder_roll_link",
+    "R_Shoulder": "r_shoulder_roll_link",
+    "L_Elbow": "l_elbow_link",
+    "R_Elbow": "r_elbow_link",
+    "L_Wrist": "l_wrist_link",
+    "R_Wrist": "r_wrist_link"
+  },
+  "height_estimation": {
+    "head_joint": "head_pitch_link",
+    "foot_joints": [
+      "l_ankle_roll_link",
+      "r_ankle_roll_link"
+    ],
+    "head_top_offset": 0.08
+  },
+  "base_orientation": {
+    "pelvis": "Pelvis",
+    "left_hip": "L_Hip",
+    "right_hip": "R_Hip",
+    "spine": "Spine1"
+  },
+  "retargeting": {
+    "collision_detection_threshold": 0.1,
+    "terrain_sample_points": 100,
+    "penetration_resolver": "hard_constraint",
+    "foot_stabilization": {
+      "enabled": true,
+      "clearance": 0.01,
+      "surface_clearance": 0.005,
+      "contact_clearance": 0.04,
+      "contact_vertical_speed": 0.18,
+      "min_contact_frames": 3,
+      "anchor_frames": 3,
+      "xy_correction_gain": 1.0,
+      "xy_smoothing_window": 5,
+      "z_smoothing_window": 5,
+      "contact_point_height_band": 0.01,
+      "max_xy_correction": 0.08,
+      "max_surface_correction": 0.08,
+      "surface_iterations": 4,
+      "wall_red_axis_only": true,
+      "wall_normal_z_threshold": 0.35,
+      "wall_x_dominance_threshold": 0.5
+    }
+  }
+}
