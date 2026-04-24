@@ -236,10 +236,18 @@ def save_trajectory_video(urdf_path, trajectory, output_path, smplx_trajectory=N
 
         cam = mujoco.MjvCamera()
         cam.type = mujoco.mjtCamera.mjCAMERA_FREE
-        cam.distance = 5.0
+        cam.distance = 3.0
         cam.azimuth = 120.0
         cam.elevation = -20.0
-        cam.lookat[:] = [0.0, 1.0, 0.4]
+
+        base_body_id = 1 if model.nbody > 1 else 0
+        if model.nbody > 0:
+            root_body_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, 0)
+            for body_id in range(1, model.nbody):
+                body_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_id)
+                if body_name and body_name != root_body_name and body_name != 'terrain_vis_link':
+                    base_body_id = body_id
+                    break
 
         num_frames = len(trajectory)
         try:
@@ -248,6 +256,7 @@ def save_trajectory_video(urdf_path, trajectory, output_path, smplx_trajectory=N
                 for i in range(num_frames):
                     data.qpos[:] = trajectory[i]
                     mujoco.mj_forward(model, data)
+                    cam.lookat[:] = data.xpos[base_body_id]
                     renderer.update_scene(data, camera=cam)
                     frame = renderer.render()
                     writer.append_data(frame)
