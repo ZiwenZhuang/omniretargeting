@@ -21,6 +21,8 @@ SMPLX_MODEL_DIR = Path("/localhdd/Datasets/")
 ROBOT_PROFILE_CASES = (
     pytest.param("unitree_g1", REPO_ROOT / "robot_models" / "unitree_g1" / "unitree_g1.json", id="g1"),
     pytest.param("unitree_h1", REPO_ROOT / "robot_models" / "unitree_h1" / "unitree_h1.json", id="h1"),
+    pytest.param("booster_k1", REPO_ROOT / "robot_models" / "booster_k1" / "booster_k1.json", id="booster-k1"),
+    pytest.param("hightorque_mini_pi_plus", REPO_ROOT / "robot_models" / "hightorque_mini_pi_plus" / "hightorque_mini_pi_plus.json", id="mini-pi-plus"),
 )
 COMMON_ALIGNMENT_JOINTS = (
     "Pelvis",
@@ -37,6 +39,12 @@ COMMON_ALIGNMENT_JOINTS = (
     "R_Elbow",
 )
 
+FLOATING_BASE_PROFILE_CASES = (
+    pytest.param("unitree_h1", REPO_ROOT / "robot_models" / "unitree_h1" / "unitree_h1.json", id="h1-floating"),
+    pytest.param("booster_k1", REPO_ROOT / "robot_models" / "booster_k1" / "booster_k1.json", id="booster-k1-floating"),
+    pytest.param("hightorque_mini_pi_plus", REPO_ROOT / "robot_models" / "hightorque_mini_pi_plus" / "hightorque_mini_pi_plus.json", id="mini-pi-plus-floating"),
+)
+
 @dataclass(frozen=True)
 class MotionCase:
     case_id: str
@@ -45,31 +53,34 @@ class MotionCase:
     terrain_path: Path
 
 
-MOTION_CASES = (
+ROBOT_MOTION_MATRIX_ROBOTS = (
+    ("g1", REPO_ROOT / "robot_models" / "unitree_g1" / "unitree_g1.json"),
+    ("h1", REPO_ROOT / "robot_models" / "unitree_h1" / "unitree_h1.json"),
+    ("booster-k1", REPO_ROOT / "robot_models" / "booster_k1" / "booster_k1.json"),
+    ("mini-pi-plus", REPO_ROOT / "robot_models" / "hightorque_mini_pi_plus" / "hightorque_mini_pi_plus.json"),
+)
+
+ROBOT_MOTION_MATRIX_SCENES = (
+    ("amass-simplelab",
+     TEST_RESOURCES / "amass" / "140_02_stageii.npz",
+     TEST_RESOURCES / "terrain" / "simplelab_enlarged_noWall.stl"),
+    ("amass-wallflip",
+     TEST_RESOURCES / "amass" / "wall_flip_smplx_amass.npz",
+     TEST_RESOURCES / "terrain" / "wall_flip_scene.obj"),
+    ("amass-prox-sofa",
+     TEST_RESOURCES / "amass" / "PROX_1_smplx_amass.npz",
+     TEST_RESOURCES / "terrain" / "PROX_sofa.obj"),
+)
+
+MOTION_CASES = tuple(
     MotionCase(
-        case_id="g1-amass-simplelab",
-        robot_profile=REPO_ROOT / "robot_models" / "unitree_g1" / "unitree_g1.json",
-        motion_path=TEST_RESOURCES / "amass" / "140_02_stageii.npz",
-        terrain_path=TEST_RESOURCES / "terrain" / "simplelab_enlarged_noWall.stl",
-    ),
-    MotionCase(
-        case_id="h1-amass-simplelab",
-        robot_profile=REPO_ROOT / "robot_models" / "unitree_h1" / "unitree_h1.json",
-        motion_path=TEST_RESOURCES / "amass" / "140_02_stageii.npz",
-        terrain_path=TEST_RESOURCES / "terrain" / "simplelab_enlarged_noWall.stl",
-    ),
-    MotionCase(
-        case_id="g1-amass-wallflip",
-        robot_profile=REPO_ROOT / "robot_models" / "unitree_g1" / "unitree_g1.json",
-        motion_path=TEST_RESOURCES / "amass" / "wall_flip_smplx_amass.npz",
-        terrain_path=TEST_RESOURCES / "terrain" / "wall_flip_scene.obj",
-    ),
-    MotionCase(
-        case_id="h1-amass-wallflip",
-        robot_profile=REPO_ROOT / "robot_models" / "unitree_h1" / "unitree_h1.json",
-        motion_path=TEST_RESOURCES / "amass" / "wall_flip_smplx_amass.npz",
-        terrain_path=TEST_RESOURCES / "terrain" / "wall_flip_scene.obj",
-    ),
+        case_id=f"{robot_id}-{scene_id}",
+        robot_profile=robot_profile,
+        motion_path=motion_path,
+        terrain_path=terrain_path,
+    )
+    for robot_id, robot_profile in ROBOT_MOTION_MATRIX_ROBOTS
+    for scene_id, motion_path, terrain_path in ROBOT_MOTION_MATRIX_SCENES
 )
 
 
@@ -325,6 +336,10 @@ class TestRealDataIntegration:
                 str(motion_case.terrain_path),
                 "--output",
                 str(output_path),
+                "--penetration-resolver",
+                "xyz_nudge",
+                "--output-scaled-terrain",
+                "/tmp/scaled_terrain.stl",
             ]
             
             # Main script will normalize the output path
@@ -756,3 +771,21 @@ def test_tpose_retargeting_alignment(robot_name: str, profile_path: Path):
         # Cleanup temporary terrain file
         if os.path.exists(terrain_path):
             os.remove(terrain_path)
+
+@pytest.mark.parametrize(("robot_name", "profile_path"), FLOATING_BASE_PROFILE_CASES)
+def test_robot_profile_has_floating_base(robot_name: str, profile_path: Path):
+    import mujoco
+
+    robot_config = _load_robot_profile(profile_path)
+    model = mujoco.MjModel.from_xml_path(str(robot_config["urdf_path"]))
+
+    assert model.njnt > 0
+    joint_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, 0)
+    joint_type = int(model.jnt_type[0])
+
+    message = "%s should expose a floating base as the first joint, got %s type=%s" % (
+        robot_name,
+        joint_name,
+        joint_type,
+    )
+    assert joint_type == int(mujoco.mjtJoint.mjJNT_FREE), message

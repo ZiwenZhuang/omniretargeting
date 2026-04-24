@@ -6,14 +6,10 @@ This is a re-implementation of the [OmniRetarget](https://arxiv.org/abs/2509.266
 
 ## Installation
 
-```bash
-pip install omniretargeting
-```
-
-Or install from source:
+install from source:
 
 ```bash
-git clone <repository-url>
+git clone <https://github.com/project-instinct/omniretargeting>
 cd omniretargeting
 pip install -e .
 ```
