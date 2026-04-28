@@ -50,6 +50,7 @@ class GenericInteractionRetargeter:
         valid_joint_names: Optional[List[str]] = None,
         replace_cylinders_with_capsules: bool = False,
         hard_penetration_constraint: bool = False,
+        link_offset_config: Optional[Dict[str, np.ndarray]] = None,
     ):
         """Initialize the generic retargeter.
 
@@ -74,6 +75,12 @@ class GenericInteractionRetargeter:
             hard_penetration_constraint: If True, enforce penetration
                 constraints inside the optimizer. If False, skip them so
                 outer post-processing can handle contact correction.
+            link_offset_config: Optional per-link offset dictionary. Keys are robot
+                link names (values in joint_mapping), values are 3-element local-frame
+                offset vectors [dx, dy, dz] (meters). The offset represents the
+                displacement from the link body origin to the actual target position
+                (e.g., a SMPLX joint position). The local frame is the link
+                coordinate system as expressed in the URDF.
         """
         self.robot_model = robot_model
         self.robot_data = robot_data
@@ -81,7 +88,22 @@ class GenericInteractionRetargeter:
         self.joint_mapping = joint_mapping  # This should already be filtered to valid joints only
         self.robot_height = robot_height
         self.hard_penetration_constraint = hard_penetration_constraint
-        
+
+        # ---- link offset configuration ----
+        # Normalize offsets to numpy arrays and validate keys
+        self.link_offset_config: Dict[str, np.ndarray] = {}
+        if link_offset_config:
+            robot_link_names = set(joint_mapping.values())
+            for link_name, offset in link_offset_config.items():
+                if link_name not in robot_link_names:
+                    raise ValueError(
+                        f"link_offset_config key '{link_name}' is not a robot link name "
+                        f"in joint_mapping values. Available links: {sorted(robot_link_names)}"
+                    )
+                self.link_offset_config[link_name] = np.asarray(offset, dtype=float).reshape(3)
+            print(f"Loaded link offsets for {len(self.link_offset_config)} link(s): "
+                  f"{list(self.link_offset_config.keys())}")
+
         # CRITICAL: Store ordered joint names to ensure consistent ordering
         # This ensures human_joints[i] matches robot_points[i] for all i
         if valid_joint_names is not None:
@@ -716,6 +738,14 @@ class GenericInteractionRetargeter:
 
         return T
 
+    def _skew(self, v: np.ndarray) -> np.ndarray:
+        """Return 3x3 skew-symmetric matrix of vector v."""
+        return np.array([
+            [0.0, -v[2],  v[1]],
+            [v[2],  0.0, -v[0]],
+            [-v[1],  v[0],  0.0],
+        ], dtype=float)
+
     def _calc_contact_jacobian_from_point(self, body_idx: int, p_body: np.ndarray = None, input_world=False):
         """
         Translational Jacobian J(q) (3 x nq) such that
@@ -771,8 +801,28 @@ class GenericInteractionRetargeter:
                 # Get position in world frame
                 pos = self.robot_data.xpos[body_id].copy()
 
-                # Compute Jacobian in world frame
-                J_full = self._calc_contact_jacobian_from_point(body_id)
+                # Compute base Jacobian for body origin (3 x nq)
+                J_base = self._calc_contact_jacobian_from_point(body_id)
+
+                # Apply offset if configured
+                if link_name in self.link_offset_config:
+                    o_local = self.link_offset_config[link_name]
+                    R_WB = self.robot_data.xmat[body_id].reshape(3, 3)
+                    o_world = R_WB @ o_local
+                    pos = pos + o_world  # p_target = p_body + R @ o_local
+
+                    # Rotational Jacobian Jr (3 x nq) for the cross-term correction
+                    p_WB = self.robot_data.xpos[body_id]
+                    p_W = p_WB.astype(np.float64).reshape(3, 1)
+                    Jp = np.zeros((3, self.robot_model.nv), dtype=np.float64, order="C")
+                    Jr = np.zeros((3, self.robot_model.nv), dtype=np.float64, order="C")
+                    mujoco.mj_jac(self.robot_model, self.robot_data, Jp, Jr, p_W, int(body_id))
+                    T = self._build_transform_qdot_to_qvel_fast()
+                    Jr_world = Jr @ T  # rotational Jacobian in world frame (3 x nq)
+                    # Cross-term: skew(o_world) @ Jr_world
+                    J_full = J_base + self._skew(o_world) @ Jr_world
+                else:
+                    J_full = J_base
 
                 # Extract optimized part (J_full is already in qpos coordinates)
                 valid_indices = self.q_a_indices[self.q_a_indices < J_full.shape[1]]
@@ -796,10 +846,11 @@ class GenericInteractionRetargeter:
             except Exception as e:
                 # CRITICAL: All joints should exist (validated in __init__), so this is unexpected
                 # Raise error instead of skipping to ensure size consistency
-                raise RuntimeError(
+                build_error_msg = (
                     f"Failed to compute Jacobian for joint '{joint_name}' -> link '{link_name}'. "
                     f"This should not happen if joint_mapping was validated. Error: {e}"
-                ) from e
+                )
+                raise RuntimeError(build_error_msg) from e
 
         # Stack Jacobians in the SAME ORDER as valid_joint_names to match human_joints order
         # This is critical for correct Laplacian matching!

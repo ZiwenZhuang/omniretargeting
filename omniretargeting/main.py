@@ -473,6 +473,7 @@ def main():
     height_estimation = robot_config.get("height_estimation")
     base_orientation = robot_config.get("base_orientation")
     retargeting = robot_config.get("retargeting")
+    link_offset_config = robot_config.get("link_offset_config")
 
     # Merge CLI flag into retargeting config
     if retargeting is None:
@@ -541,6 +542,7 @@ def main():
             height_estimation=height_estimation,
             base_orientation=base_orientation,
             retargeting=retargeting,
+            link_offset_config=link_offset_config,
         )
 
         # Perform retargeting

@@ -35,6 +35,7 @@ class OmniRetargeter:
         height_estimation: Optional[Dict[str, Any]] = None,
         base_orientation: Optional[Dict[str, str]] = None,
         retargeting: Optional[Dict[str, Any]] = None,
+        link_offset_config: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize the OmniRetargeter.
@@ -48,6 +49,7 @@ class OmniRetargeter:
             height_estimation: Optional settings for human height estimation from SMPLX joints
             base_orientation: Optional joint names used for base orientation estimation
             retargeting: Optional solver/retargeting settings forwarded to interaction retargeter
+            link_offset_config: Optional per-link offset dictionary forwarded to GenericInteractionRetargeter.
         """
         self.robot_urdf_path = Path(robot_urdf_path)
         self.terrain_mesh_path = Path(terrain_mesh_path)
@@ -69,6 +71,7 @@ class OmniRetargeter:
         self.height_estimation_config = dict(height_estimation or {})
         self.base_orientation_config = dict(base_orientation or {})
         self.retargeting_config = dict(retargeting or {})
+        self.link_offset_config = link_offset_config
 
         # Create mapping from SMPLX joint names to indices
         self.smplx_joint_indices = {}
@@ -408,6 +411,7 @@ class OmniRetargeter:
             valid_joint_names=self.valid_joint_names,  # CRITICAL: Pass ordered joint names for consistency
             replace_cylinders_with_capsules=bool(self.retargeting_config.get("replace_cylinders_with_capsules", False)),
             hard_penetration_constraint=self.retargeting_config.get("penetration_resolver", "hard_constraint") == "hard_constraint",
+            link_offset_config=self.link_offset_config,
         )
 
         # Retarget each frame
