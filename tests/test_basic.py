@@ -567,6 +567,7 @@ def test_perform_retargeting_passes_hard_penetration_constraint():
         "replace_cylinders_with_capsules": True,
         "penetration_resolver": "xyz_nudge",
     }
+    retargeter.link_offset_config = None
     retargeter.valid_joint_names = ["Pelvis"]
     retargeter.base_orientation_config = {}
 
@@ -587,6 +588,7 @@ def test_perform_retargeting_passes_hard_penetration_constraint():
         valid_joint_names=["Pelvis"],
         replace_cylinders_with_capsules=True,
         hard_penetration_constraint=False,
+        link_offset_config=None,
     )
 
 @pytest.mark.parametrize(("robot_name", "profile_path"), ROBOT_PROFILE_CASES)
