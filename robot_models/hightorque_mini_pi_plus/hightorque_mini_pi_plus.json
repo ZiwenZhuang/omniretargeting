@@ -57,5 +57,123 @@
       "wall_normal_z_threshold": 0.35,
       "wall_x_dominance_threshold": 0.5
     }
-  }
+  },
+  "link_offset_config": {
+    "base_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "l_hip_roll_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "r_hip_roll_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "torso_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "l_calf_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "r_calf_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "l_ankle_pitch_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "r_ankle_pitch_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "l_ankle_roll_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "r_ankle_roll_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "head_pitch_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "l_shoulder_roll_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "r_shoulder_roll_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "l_elbow_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "r_elbow_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "l_wrist_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "r_wrist_link": [
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "joint_pos_fitting_smplx": {
+    "l_hip_roll_joint": 0.12,
+    "r_hip_roll_joint": -0.12,
+    "l_calf_joint": 0.3,
+    "r_calf_joint": 0.3,
+    "l_ankle_pitch_joint": -0.15,
+    "r_ankle_pitch_joint": -0.15,
+    "l_shoulder_pitch_joint": -1.3,
+    "r_shoulder_pitch_joint": -1.3,
+    "l_shoulder_roll_joint": 1.0,
+    "r_shoulder_roll_joint": -1.0,
+    "l_upper_arm_joint": 0.0,
+    "r_upper_arm_joint": 0.0,
+    "l_elbow_joint": 0.0,
+    "r_elbow_joint": 0.0,
+    "head_pitch_joint": 0.0,
+    "head_yaw_joint": 0.0,
+    "waist_yaw_joint": 0.0
+  },
+  "smplx_betas": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ]
 }

@@ -54,5 +54,113 @@
       "wall_normal_z_threshold": 0.35,
       "wall_x_dominance_threshold": 0.5
     }
-  }
+  },
+  "link_offset_config": {
+    "Left_Hip_Roll": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "Right_Hip_Roll": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "Trunk": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "Left_Shank": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "Right_Shank": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "Left_Ankle_Cross": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "Right_Ankle_Cross": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "Head_2": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "Left_Arm_2": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "Right_Arm_2": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "Left_Arm_3": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "Right_Arm_3": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "left_hand_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "right_hand_link": [
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "joint_pos_fitting_smplx": {
+    "AAHead_yaw": 0.0,
+    "Head_pitch": 0.0,
+    "ALeft_Shoulder_Pitch": 0.0,
+    "Left_Shoulder_Roll": 0.0,
+    "Left_Elbow_Pitch": 0.0,
+    "Left_Elbow_Yaw": 0.0,
+    "ARight_Shoulder_Pitch": 0.0,
+    "Right_Shoulder_Roll": 0.0,
+    "Right_Elbow_Pitch": 0.0,
+    "Right_Elbow_Yaw": 0.0,
+    "Left_Hip_Pitch": 0.0,
+    "Left_Hip_Roll": 0.0,
+    "Left_Hip_Yaw": 0.0,
+    "Left_Knee_Pitch": 0.0,
+    "Left_Ankle_Pitch": 0.0,
+    "Left_Ankle_Roll": 0.0,
+    "Right_Hip_Pitch": 0.0,
+    "Right_Hip_Roll": 0.0,
+    "Right_Hip_Yaw": 0.0,
+    "Right_Knee_Pitch": 0.0,
+    "Right_Ankle_Pitch": 0.0,
+    "Right_Ankle_Roll": 0.0
+  },
+  "smplx_betas": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ]
 }
