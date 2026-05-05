@@ -474,6 +474,7 @@ def main():
     base_orientation = robot_config.get("base_orientation")
     retargeting = robot_config.get("retargeting")
     link_offset_config = robot_config.get("link_offset_config")
+    smplx_betas = robot_config.get("smplx_betas")
 
     # Merge CLI flag into retargeting config
     if retargeting is None:
@@ -543,6 +544,8 @@ def main():
             base_orientation=base_orientation,
             retargeting=retargeting,
             link_offset_config=link_offset_config,
+            smplx_betas=smplx_betas,
+            smplx_model_dir=args.smplx_model_dir,
         )
 
         # Perform retargeting
