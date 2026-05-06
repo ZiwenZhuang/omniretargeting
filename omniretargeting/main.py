@@ -16,7 +16,8 @@ import shutil
 import re
 import xml.etree.ElementTree as ET
 
-DEFAULT_ROBOT_CONFIG_PATH = "robot_models/unitree_g1/unitree_g1.json"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_ROBOT_CONFIG_PATH = REPO_ROOT / "robot_models" / "unitree_g1" / "unitree_g1.json"
 
 @contextlib.contextmanager
 def temporary_visualization_scene(urdf_path, terrain_mesh, target_faces=5000):
@@ -438,12 +439,12 @@ def main():
     # Load robot profile config (default profile path can be overridden by --robot-config).
     robot_config = {}
     if args.robot_config:
-        robot_config_path = Path(args.robot_config)
+        robot_config_path = Path(args.robot_config).expanduser()
         if robot_config_path.exists():
             robot_config = load_robot_config(robot_config_path)
             profile_name = robot_config.get("name", robot_config_path.stem)
             print(f"Loaded robot config profile: {profile_name}")
-        elif args.robot_config == DEFAULT_ROBOT_CONFIG_PATH:
+        elif robot_config_path == DEFAULT_ROBOT_CONFIG_PATH:
             print(f"Default robot config not found at {DEFAULT_ROBOT_CONFIG_PATH}, continuing without profile.")
         else:
             raise FileNotFoundError(f"Robot config not found: {args.robot_config}")
