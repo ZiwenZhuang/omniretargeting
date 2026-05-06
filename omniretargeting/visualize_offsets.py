@@ -135,7 +135,7 @@ def _apply_joint_pos_fitting_smplx(
 def _load_robot_default_pose(
     urdf_path: str | Path,
     joint_pos_fitting_smplx: dict[str, float] | None = None,
-) -> tuple[mujoco.MjModel, mujoco.MjData, dict[str, int], np.ndarray]:
+) -> tuple[mujoco.MjModel, mujoco.MjData, dict[str, int], np.ndarray, np.ndarray]:
     model = mujoco.MjModel.from_xml_path(str(urdf_path))
     data = mujoco.MjData(model)
     mujoco.mj_resetData(model, data)
@@ -146,13 +146,15 @@ def _load_robot_default_pose(
 
     body_ids = {}
     body_positions = np.zeros((model.nbody, 3), dtype=float)
+    body_rotations = np.zeros((model.nbody, 3, 3), dtype=float)
     for body_idx in range(model.nbody):
         body_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_idx)
         if body_name:
             body_ids[body_name] = body_idx
         body_positions[body_idx] = data.xpos[body_idx].copy()
+        body_rotations[body_idx] = data.xmat[body_idx].reshape(3, 3).copy()
 
-    return model, data, body_ids, body_positions
+    return model, data, body_ids, body_positions, body_rotations
 
 
 def _build_default_smplx_pose(pelvis_position: np.ndarray, robot_height: float | None) -> np.ndarray:
@@ -220,7 +222,9 @@ def _plot_visualization(
     smplx_joints: np.ndarray,
     model: mujoco.MjModel,
     body_positions: np.ndarray,
+    body_rotations: np.ndarray,
     joint_mapping: dict[str, str],
+    link_offset_config: dict[str, object] | None,
     output_path: Path | None = None,
 ) -> None:
     fig = plt.figure(figsize=(14, 11))
@@ -236,6 +240,17 @@ def _plot_visualization(
         markeredgecolor="black",
         markeredgewidth=0.9,
         label="Mapped robot links",
+    )
+    offset_target_legend = Line2D(
+        [0],
+        [0],
+        linestyle="None",
+        marker="o",
+        markersize=8,
+        markerfacecolor="#00a896",
+        markeredgecolor="black",
+        markeredgewidth=0.8,
+        label="Offset target positions",
     )
 
     if model.nbody > 1:
@@ -291,6 +306,7 @@ def _plot_visualization(
     )
 
     smplx_name_to_index = {name: idx for idx, name in enumerate(SMPLX_JOINT_NAMES)}
+    offset_target_points = []
     for smplx_name, body_name in joint_mapping.items():
         joint_idx = smplx_name_to_index.get(smplx_name)
         if joint_idx is None:
@@ -329,12 +345,40 @@ def _plot_visualization(
             fontsize=7,
             color="black",
         )
+        if link_offset_config and body_name in link_offset_config:
+            offset_local = np.asarray(link_offset_config[body_name], dtype=float).reshape(3)
+            offset_world = body_rotations[body_idx] @ offset_local
+            offset_target = robot_point + offset_world
+            offset_target_points.append(offset_target)
+            ax.plot(
+                [robot_point[0], offset_target[0]],
+                [robot_point[1], offset_target[1]],
+                [robot_point[2], offset_target[2]],
+                linestyle="-",
+                linewidth=2.0,
+                color="#00a896",
+                alpha=0.85,
+            )
+            ax.scatter(
+                [offset_target[0]],
+                [offset_target[1]],
+                [offset_target[2]],
+                c=["#00a896"],
+                s=85,
+                marker="o",
+                edgecolors="black",
+                linewidths=0.8,
+                zorder=13,
+            )
 
     for joint_name in ["Pelvis", "Head", "L_Wrist", "R_Wrist", "L_Ankle", "R_Ankle"]:
         point = smplx_joints[smplx_name_to_index[joint_name]]
         ax.text(point[0], point[1], point[2] + 0.03, joint_name, fontsize=8)
 
-    all_points = np.vstack([smplx_joints, body_positions])
+    all_points = [smplx_joints, body_positions]
+    if offset_target_points:
+        all_points.append(np.asarray(offset_target_points, dtype=float))
+    all_points = np.vstack(all_points)
     _set_equal_axes(ax, all_points)
     ax.set_xlabel("X (m)")
     ax.set_ylabel("Y (m)")
@@ -345,6 +389,9 @@ def _plot_visualization(
     handles, labels = ax.get_legend_handles_labels()
     handles.append(mapped_link_legend)
     labels.append("Mapped robot links")
+    if offset_target_points:
+        handles.append(offset_target_legend)
+        labels.append("Offset target positions")
     ax.legend(handles, labels, loc="upper right")
     plt.tight_layout()
     if output_path is not None:
@@ -395,13 +442,17 @@ def main() -> None:
         raise ValueError("Robot config must define a non-empty 'joint_mapping'.")
 
     joint_pos_fitting_smplx = robot_config.get("joint_pos_fitting_smplx")
-    model, data, body_ids, body_positions = _load_robot_default_pose(
+    model, data, body_ids, body_positions, body_rotations = _load_robot_default_pose(
         robot_urdf_path,
         joint_pos_fitting_smplx=joint_pos_fitting_smplx,
     )
     missing_bodies = sorted({body_name for body_name in joint_mapping.values() if body_name not in body_ids})
     if missing_bodies:
         raise ValueError(f"Mapped robot bodies were not found in the URDF: {missing_bodies}")
+
+    link_offset_config = robot_config.get("link_offset_config")
+    if link_offset_config is not None and not isinstance(link_offset_config, dict):
+        raise ValueError("Robot config 'link_offset_config' must be a JSON object when provided.")
 
     robot_height = robot_config.get("robot_height")
     if robot_height is None:
@@ -429,7 +480,9 @@ def main() -> None:
         smplx_joints=smplx_joints,
         model=model,
         body_positions=body_positions,
+        body_rotations=body_rotations,
         joint_mapping=joint_mapping,
+        link_offset_config=link_offset_config,
         output_path=output_path,
     )
 
@@ -439,6 +492,7 @@ def main() -> None:
     print(f"[visualize_offsets] smplx_betas={'none' if not smplx_betas else len(smplx_betas)}")
     print(f"[visualize_offsets] robot_height={robot_height:.3f} m")
     print(f"[visualize_offsets] mapped_links={len(joint_mapping)}")
+    print(f"[visualize_offsets] link_offsets={0 if not link_offset_config else len(link_offset_config)}")
     if output_path is not None:
         print(f"[visualize_offsets] output={output_path}")
 
