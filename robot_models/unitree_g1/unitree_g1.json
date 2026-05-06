@@ -5,7 +5,7 @@
     "Pelvis": "pelvis",
     "L_Hip": "left_hip_roll_link",
     "R_Hip": "right_hip_roll_link",
-    "Spine1": "waist_yaw_link",
+    "Spine2": "waist_roll_link",
     "L_Knee": "left_knee_link",
     "R_Knee": "right_knee_link",
     "L_Ankle": "left_ankle_roll_link",
@@ -54,5 +54,120 @@
       "wall_normal_z_threshold": 0.35,
       "wall_x_dominance_threshold": 0.5
     }
-  }
+  },
+  "link_offset_config": {
+    "pelvis": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "left_hip_roll_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "right_hip_roll_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "waist_roll_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "left_knee_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "right_knee_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "left_ankle_roll_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "right_ankle_roll_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "left_shoulder_roll_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "right_shoulder_roll_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "left_elbow_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "right_elbow_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "left_wrist_yaw_link": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "right_wrist_yaw_link": [
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "joint_pos_fitting_smplx": {
+    "left_hip_pitch_joint": 0.0,
+    "left_hip_roll_joint": 0.0,
+    "left_hip_yaw_joint": 0.0,
+    "left_knee_joint": 0.0,
+    "left_ankle_pitch_joint": 0.0,
+    "left_ankle_roll_joint": 0.0,
+    "right_hip_pitch_joint": 0.0,
+    "right_hip_roll_joint": 0.0,
+    "right_hip_yaw_joint": 0.0,
+    "right_knee_joint": 0.0,
+    "right_ankle_pitch_joint": 0.0,
+    "right_ankle_roll_joint": 0.0,
+    "waist_yaw_joint": 0.0,
+    "waist_roll_joint": 0.0,
+    "waist_pitch_joint": 0.0,
+    "left_shoulder_pitch_joint": 0.0,
+    "left_shoulder_roll_joint": 1.57,
+    "left_shoulder_yaw_joint": 0.0,
+    "left_elbow_joint": 1.57,
+    "left_wrist_roll_joint": 0.0,
+    "left_wrist_pitch_joint": 0.0,
+    "left_wrist_yaw_joint": 0.0,
+    "right_shoulder_pitch_joint": 0.0,
+    "right_shoulder_roll_joint": -1.57,
+    "right_shoulder_yaw_joint": 0.0,
+    "right_elbow_joint": 1.57,
+    "right_wrist_roll_joint": 0.0,
+    "right_wrist_pitch_joint": 0.0,
+    "right_wrist_yaw_joint": 0.0
+  },
+  "smplx_betas": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ]
 }

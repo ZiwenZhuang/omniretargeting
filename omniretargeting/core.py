@@ -35,6 +35,9 @@ class OmniRetargeter:
         height_estimation: Optional[Dict[str, Any]] = None,
         base_orientation: Optional[Dict[str, str]] = None,
         retargeting: Optional[Dict[str, Any]] = None,
+        link_offset_config: Optional[Dict[str, Any]] = None,
+        smplx_betas: Optional[List[float]] = None,
+        smplx_model_dir: Optional[str] = None,
     ):
         """
         Initialize the OmniRetargeter.
@@ -48,6 +51,9 @@ class OmniRetargeter:
             height_estimation: Optional settings for human height estimation from SMPLX joints
             base_orientation: Optional joint names used for base orientation estimation
             retargeting: Optional solver/retargeting settings forwarded to interaction retargeter
+            link_offset_config: Optional per-link offset dictionary forwarded to GenericInteractionRetargeter.
+            smplx_betas: Optional SMPL-X body shape parameters for computing exact human height
+            smplx_model_dir: Optional path to SMPL-X model directory (overrides default search paths)
         """
         self.robot_urdf_path = Path(robot_urdf_path)
         self.terrain_mesh_path = Path(terrain_mesh_path)
@@ -69,6 +75,9 @@ class OmniRetargeter:
         self.height_estimation_config = dict(height_estimation or {})
         self.base_orientation_config = dict(base_orientation or {})
         self.retargeting_config = dict(retargeting or {})
+        self.link_offset_config = link_offset_config
+        self.smplx_betas = smplx_betas
+        self.smplx_model_dir = smplx_model_dir
 
         # Create mapping from SMPLX joint names to indices
         self.smplx_joint_indices = {}
@@ -176,8 +185,55 @@ class OmniRetargeter:
             return 1.6
         
         print(f"Detected robot height: {height:.4f}m (Min Z: {min_z:.4f}, Max Z: {max_z:.4f})")
-        
+
         return height
+
+    def _compute_human_height_from_betas(
+        self,
+        betas: List[float],
+        smplx_model_dir: Optional[str] = None,
+    ) -> Optional[float]:
+        """
+        Compute exact human height from SMPL-X body shape parameters.
+
+        Args:
+            betas: SMPL-X body shape parameters
+            smplx_model_dir: Optional path to SMPL-X model directory
+
+        Returns:
+            Human height in meters, or None if computation fails
+        """
+        try:
+            import smplx as smplx_lib
+            import torch
+        except ImportError:
+            return None
+
+        import os
+        search_paths = [smplx_model_dir] if smplx_model_dir else []
+        search_paths.extend([
+            "/localhdd/Datasets/smplx",
+            "/localhdd/Datasets/",
+            "data/body_models/smplx",
+        ])
+        model_path = next((p for p in search_paths if p and os.path.exists(p)), None)
+        if model_path is None:
+            return None
+
+        try:
+            num_betas = len(betas)
+            model = smplx_lib.SMPLX(model_path, num_betas=num_betas, use_hands=False, use_face=False)
+            betas_tensor = torch.tensor([betas], dtype=torch.float32)
+            with torch.no_grad():
+                out = model(betas=betas_tensor)
+            joints_smplx = out.joints[0, :22].numpy()
+
+            # Height is vertical extent in SMPL-X Y-axis (up)
+            human_height = float(joints_smplx[:, 1].max() - joints_smplx[:, 1].min())
+            return human_height
+        except Exception as e:
+            print(f"[OmniRetargeter] Failed to compute height from betas: {e}")
+            return None
 
     def _setup_retargeting_components(self):
         """Setup internal retargeting components."""
@@ -286,27 +342,26 @@ class OmniRetargeter:
     ) -> float:
         """
         Compute the appropriate scaling factor for the terrain.
-        
+
         This implementation assumes the terrain provided corresponds to the real-world scale
         relative to the robot's size.
         """
-        # Default implementation: Scale based on robot vs human height ratio only
-        # This assumes the terrain mesh is already at a "human scale" (e.g. captured or designed for humans)
-        # and we just need to adjust it for the robot's size.
-        
-        # Estimate human height from SMPLX trajectory
-        # Height ≈ (head Z - min foot Z) in standing pose
-        # Or more robustly: Max height difference in trajectory
-        
-        # Use simple heuristic if we don't have betas to calculate exact height
-        # Assuming typical human height of 1.7m if estimation fails or is unreliable
-        estimated_human_height = 1.7
-        
-        if smplx_trajectory is not None and len(smplx_trajectory) > 0:
+        # Priority 1: Use exact height from smplx_betas if available
+        estimated_human_height = None
+        if self.smplx_betas is not None:
+            estimated_human_height = self._compute_human_height_from_betas(
+                self.smplx_betas,
+                self.smplx_model_dir,
+            )
+            if estimated_human_height is not None:
+                print(f"Computed human height from smplx_betas: {estimated_human_height:.3f}m")
+
+        # Priority 2: Estimate from trajectory if betas unavailable
+        if estimated_human_height is None and smplx_trajectory is not None and len(smplx_trajectory) > 0:
             # Estimate height from joints
             # SMPLX/SMPL joints: 0: Pelvis, 10/11: Feet, 15: Head (approx)
             # We can find the max vertical extent across all frames
-            
+
             # Find the frame where the person is most upright (max head height)
             # Assuming Z is up
             head_joint_name = self.height_estimation_config.get("head_joint", "Head")
@@ -340,13 +395,18 @@ class OmniRetargeter:
                 
                 # Sanity check: Constrain to reasonable human range [1.4, 2.2]
                 estimated_human_height = np.clip(estimated_human_height, 1.4, 2.2)
-                
+
                 print(f"Estimated human height from trajectory: {estimated_human_height:.3f}m")
 
+        # Priority 3: Fallback to 1.7m
+        if estimated_human_height is None:
+            estimated_human_height = 1.7
+            print(f"Using default human height: {estimated_human_height:.3f}m")
+
         scale_factor = self.robot_height / estimated_human_height
-        
-        print(f"Computed terrain scale factor: {scale_factor:.4f} (Robot: {self.robot_height}m, Human Est: {estimated_human_height:.3f}m)")
-        
+
+        print(f"Computed terrain scale factor: {scale_factor:.4f} (Robot: {self.robot_height}m, Human: {estimated_human_height:.3f}m)")
+
         return float(scale_factor)
 
     def _extract_foot_positions(self, smplx_trajectory: np.ndarray) -> np.ndarray:
@@ -408,6 +468,7 @@ class OmniRetargeter:
             valid_joint_names=self.valid_joint_names,  # CRITICAL: Pass ordered joint names for consistency
             replace_cylinders_with_capsules=bool(self.retargeting_config.get("replace_cylinders_with_capsules", False)),
             hard_penetration_constraint=self.retargeting_config.get("penetration_resolver", "hard_constraint") == "hard_constraint",
+            link_offset_config=self.link_offset_config,
         )
 
         # Retarget each frame

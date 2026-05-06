@@ -59,3 +59,5 @@ Date: 2026-03-26
 - Add profile-level validation command to check that all mapped link names exist in a given URDF before retargeting.
 - Add more robot profiles (with verified link names) for each target humanoid.
 - Install test dependencies and run full test suite.
+
+- Added omniretargeting.visualize_offsets to render default SMPL-X joints against robot links from a robot config.
