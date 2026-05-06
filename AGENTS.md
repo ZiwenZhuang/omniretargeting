@@ -15,14 +15,15 @@
 
 - Expect a dirty worktree. Do not revert unrelated local changes.
 - Prefer small, surgical patches because this repo is actively edited and synchronized between machines.
-- If you need a verified environment, use marsbrain instead of assuming the local machine has all dependencies installed. See `agents/marsbrain-computation.md`.
+- Follow the core OmniRetargeting math when designing APIs or refactors. This repository is a user-friendly implementation for future large-scale motion retargeting; convenience abstractions must not obscure the algorithm's actual inputs: mapped source target positions, robot link points, environment samples, interaction-mesh/Laplacian relationships, and explicit solver/post-processing configuration.
+- Do not promote source-specific structures such as SMPL-X/BVH skeleton hierarchy, body-model internals, or per-source diagnostics into generic core contracts unless the retargeting algorithm directly consumes them. Keep those details in adapters, visualization helpers, or metadata.
+- If you need a verified environment, use other resources instead of assuming the local machine has all dependencies installed. See available resources in `agents/computation/`.
 - Do NOT push to remote unless approved.
-- Typically, do not commit the files in `agents/computation` for privacy.
 
 ## Reference Implementation
 
 - Reference repo: `https://github.com/amazon-far/holosoma` (retargeting module at `src/holosoma_retargeting`)
-- You may clone the reference repo into a local directory on marsbrain for reading purposes.
+- Reference paper: `https://arxiv.org/abs/2509.26633`
 - Do **not** import any code from the cloned reference directory.
 - Do **not** massively copy code from the reference repo.
 - Before every significant code implementation, check whether existing functions or utilities are already available in this repo before writing new ones.

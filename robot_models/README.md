@@ -15,6 +15,5 @@ python -m omniretargeting.main \
 
 Notes:
 - Set `urdf_path` in the profile JSON; the CLI does not take a `--urdf` flag.
-- If `--mapping` is provided, it overrides `joint_mapping` from the profile.
 - Link names in `joint_mapping` must match body names in your URDF/MuJoCo model.
 - `unitree_h1/unitree_h1.json` is a starter profile and may need link-name adjustments for your specific URDF variant.
