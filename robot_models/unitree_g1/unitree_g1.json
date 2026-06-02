@@ -218,7 +218,9 @@
         "RightArm": "right_shoulder_roll_link",
         "RightForeArm": "right_elbow_link",
         "RightHand": "right_wrist_yaw_link",
-        "Spine": "waist_roll_link"
+        "Spine": "waist_roll_link",
+        "LeftToe": "left_ankle_roll_link",
+        "RightToe": "right_ankle_roll_link"
       },
       "base_orientation": {
         "pelvis": "Hips",
@@ -293,6 +295,16 @@
           0.0
         ],
         "right_wrist_yaw_link": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "LeftToe": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "RightToe": [
           0.0,
           0.0,
           0.0

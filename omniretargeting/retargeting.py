@@ -87,21 +87,25 @@ class GenericInteractionRetargeter:
         self.hard_penetration_constraint = hard_penetration_constraint
 
         # ---- link offset configuration ----
-        # Normalize offsets to numpy arrays and validate keys
+        # Normalize offsets to numpy arrays and validate keys.
+        # Keys can be either source target names (per-target offset) or robot link
+        # names (per-link offset shared by all targets on that link).
         self.link_offset_config: Dict[str, np.ndarray] = {}
         if link_offset_config:
             robot_link_names = set(joint_mapping.values())
-            for link_name, offset in link_offset_config.items():
-                if link_name not in robot_link_names:
+            source_target_set = set(joint_mapping.keys())
+            for key, offset in link_offset_config.items():
+                # Accept keys that are either source target names or robot link names
+                if key not in source_target_set and key not in robot_link_names:
                     import warnings
                     warnings.warn(
-                        f"link_offset_config key {link_name} is not in joint_mapping. "
-                        f"Skipping. Available links: {sorted(robot_link_names)}",
+                        f"link_offset_config key {key} is neither a source target name "
+                        f"nor a robot link name. Skipping.",
                         UserWarning
                     )
                     continue
-                self.link_offset_config[link_name] = np.asarray(offset, dtype=float).reshape(3)
-            print(f"Loaded link offsets for {len(self.link_offset_config)} link(s): "
+                self.link_offset_config[key] = np.asarray(offset, dtype=float).reshape(3)
+            print(f"Loaded link offsets for {len(self.link_offset_config)} target(s): "
                   f"{list(self.link_offset_config.keys())}")
 
         # CRITICAL: Store ordered source target names to ensure consistent ordering.
@@ -813,9 +817,10 @@ class GenericInteractionRetargeter:
                 # Compute base Jacobian for body origin (3 x nq)
                 J_base = self._calc_contact_jacobian_from_point(body_id)
 
-                # Apply offset if configured
-                if link_name in self.link_offset_config:
-                    o_local = self.link_offset_config[link_name]
+                # Apply offset if configured (check per-target first, then per-link)
+                offset_key = target_name if target_name in self.link_offset_config else link_name
+                if offset_key in self.link_offset_config:
+                    o_local = self.link_offset_config[offset_key]
                     R_WB = self.robot_data.xmat[body_id].reshape(3, 3)
                     o_world = R_WB @ o_local
                     pos = pos + o_world  # p_target = p_body + R @ o_local
