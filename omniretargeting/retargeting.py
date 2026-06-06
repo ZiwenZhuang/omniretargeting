@@ -11,6 +11,7 @@ from scipy.spatial.transform import Rotation
 import trimesh
 from typing import Any, Dict, List, Optional, Tuple
 from pathlib import Path
+import fnmatch
 
 from .utils import (
     sample_points_on_mesh,
@@ -48,6 +49,7 @@ class GenericInteractionRetargeter:
         replace_cylinders_with_capsules: bool = False,
         hard_penetration_constraint: bool = False,
         link_offset_config: Optional[Dict[str, np.ndarray]] = None,
+        joint_regularization_boost: Optional[Dict] = None,
     ):
         """Initialize the generic retargeter.
 
@@ -85,6 +87,7 @@ class GenericInteractionRetargeter:
         self.joint_mapping = joint_mapping  # This should already be filtered to valid source targets only.
         self.robot_height = robot_height
         self.hard_penetration_constraint = hard_penetration_constraint
+        self.joint_regularization_boost = joint_regularization_boost
 
         # ---- link offset configuration ----
         # Normalize offsets to numpy arrays and validate keys.
@@ -211,11 +214,13 @@ class GenericInteractionRetargeter:
         self.q_a_lb = full_lower_limits[self.q_a_indices]
         self.q_a_ub = full_upper_limits[self.q_a_indices]
 
-        # Joint cost weights - small regularization to prevent extreme angles
-        # Floating base (first 7 DOF) gets very small weight, joints get moderate weight
-        self.Q_diag = np.ones(self.nq_a) * 1e-3  # Small default regularization (matching original)
-        
+        # Joint cost weights - configurable per-robot via joint_regularization_boost
+        boost_cfg = self.joint_regularization_boost or {}
+        default_weight = float(boost_cfg.get("default", 1e-3))
+        self.Q_diag = np.ones(self.nq_a) * default_weight
+
         # Reduce weight for floating base to allow free movement
+        base_weight = float(boost_cfg.get("base", 0.001))
         base_indices_in_qa = []
         for base_idx in range(7):
             if base_idx in self.q_a_indices:
@@ -224,7 +229,7 @@ class GenericInteractionRetargeter:
                     base_indices_in_qa.append(idx_in_qa[0])
         
         if len(base_indices_in_qa) > 0:
-            self.Q_diag[base_indices_in_qa] = 0.001  # Very small weight for base
+            self.Q_diag[base_indices_in_qa] = base_weight
         
         # Store smoothness weight (matching original: 0.2)
         self.smooth_weight = 0.2
@@ -595,14 +600,20 @@ class GenericInteractionRetargeter:
             joint_name = self.robot_model.joint(i).name
             if joint_name:
                 joint_name_lower = joint_name.lower()
-                # Strong regularization for joints prone to 180° flips
-                if ('waist' in joint_name_lower or 'torso' in joint_name_lower or 
-                    ('hip' in joint_name_lower and 'yaw' in joint_name_lower)):
-                    qpos_adr = self.robot_model.jnt_qposadr[i]
-                    if qpos_adr in self.q_a_indices:
-                        idx_in_qa = np.where(self.q_a_indices == qpos_adr)[0]
-                        if len(idx_in_qa) > 0:
-                            Q_diag_modified[idx_in_qa[0]] = 0.2  # Strong regularization (matching original MANUAL_COST)
+                # Per-joint regularization boost from robot config
+                boost_joints = (self.joint_regularization_boost or {}).get("joints")
+                if not boost_joints:
+                    continue
+                for pattern, boost_value in boost_joints.items():
+                    if fnmatch.fnmatch(joint_name_lower, pattern.lower()):
+                        qpos_adr = self.robot_model.jnt_qposadr[i]
+                        if qpos_adr in self.q_a_indices:
+                            idx_in_qa = np.where(self.q_a_indices == qpos_adr)[0]
+                            if len(idx_in_qa) > 0:
+                                Q_diag_modified[idx_in_qa[0]] = max(
+                                    Q_diag_modified[idx_in_qa[0]], float(boost_value)
+                                )
+                        break
         
         # Q_diag cost: ||sqrt(Q_diag) * (dqa + q_a_current)||^2
         # This matches original: cp.sum_squares(cp.multiply(np.sqrt(Qd), dqa + q_a_n_last))

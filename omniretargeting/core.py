@@ -294,6 +294,7 @@ class OmniRetargeter:
             replace_cylinders_with_capsules=bool(self.retargeting_config.get("replace_cylinders_with_capsules", False)),
             hard_penetration_constraint=self.retargeting_config.get("penetration_resolver", "hard_constraint") == "hard_constraint",
             link_offset_config=self.link_offset_config,
+            joint_regularization_boost=self.retargeting_config.get("joint_regularization_boost"),
         )
 
         q_init = np.zeros(self.robot_model.nq)
@@ -322,16 +323,38 @@ class OmniRetargeter:
         if joints.shape[0] == 0:
             return None
 
-        pelvis_name = self.base_orientation_config.get("pelvis", "Pelvis")
-        left_hip_name = self.base_orientation_config.get("left_hip", "L_Hip")
-        right_hip_name = self.base_orientation_config.get("right_hip", "R_Hip")
-        spine_name = self.base_orientation_config.get("spine", "Spine1")
+        pelvis_name = self.base_orientation_config.get("pelvis")
+        left_hip_name = self.base_orientation_config.get("left_hip")
+        right_hip_name = self.base_orientation_config.get("right_hip")
+        spine_name = self.base_orientation_config.get("spine")
+
+        if not all([pelvis_name, left_hip_name, right_hip_name, spine_name]):
+            raise ValueError(
+                "base_orientation_config must specify 'pelvis', 'left_hip', 'right_hip', and 'spine' joint names. "
+                "Example: { 'pelvis': 'Pelvis', 'left_hip': 'L_Hip', 'right_hip': 'R_Hip', 'spine': 'Spine1' }. "
+                f"Current config: {self.base_orientation_config}"
+            )
 
         joint_indices = {name: idx for idx, name in enumerate(self.source_target_names)}
-        pelvis_idx = joint_indices.get(pelvis_name, 0)
-        left_hip_idx = joint_indices.get(left_hip_name, 1)
-        right_hip_idx = joint_indices.get(right_hip_name, 2)
-        spine_idx = joint_indices.get(spine_name, 3)
+        pelvis_idx = joint_indices.get(pelvis_name)
+        left_hip_idx = joint_indices.get(left_hip_name)
+        right_hip_idx = joint_indices.get(right_hip_name)
+        spine_idx = joint_indices.get(spine_name)
+
+        missing = []
+        if pelvis_idx is None:
+            missing.append(f"pelvis='{pelvis_name}'")
+        if left_hip_idx is None:
+            missing.append(f"left_hip='{left_hip_name}'")
+        if right_hip_idx is None:
+            missing.append(f"right_hip='{right_hip_name}'")
+        if spine_idx is None:
+            missing.append(f"spine='{spine_name}'")
+        if missing:
+            raise ValueError(
+                f"Source target names {self.source_target_names} missing required joints: {', '.join(missing)}. "
+                "Update base_orientation_config to match the source skeleton's joint naming."
+            )
 
         max_required_idx = max(pelvis_idx, left_hip_idx, right_hip_idx, spine_idx)
         if joints.shape[0] <= max_required_idx:

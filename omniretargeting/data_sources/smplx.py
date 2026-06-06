@@ -1,4 +1,4 @@
-"""SMPL-X motion data source adapter."""
+"""SMPL-X AMASS style motion data source adapter."""
 
 from __future__ import annotations
 
@@ -11,6 +11,19 @@ from scipy.spatial.transform import Rotation
 
 from omniretargeting.data_sources.base import DataSource, MotionData, MotionFrame
 from omniretargeting.data_sources.registry import register_data_source
+
+# T-pose body-aligned rotation: maps body-frame to SMPL-X T-pose frame.
+# SMPL-X canonical pose has body facing approx. +Z, Y-up.
+# Columns = [forward, right, up] computed with _estimate_base_orientation_from_joints
+# algorithm on the neutral (betas=0) SMPL-X T-pose joint positions.
+# Variation across body shapes (betas) is < 2 degrees, negligible in practice.
+_SMPLX_ROOT_OFFSET = np.array(
+    [[0.0, 1.0, 0.0],
+     [0.0, 0.0, 1.0],
+     [1.0, 0.0, 0.0]],
+    dtype=np.float32,
+)
+
 
 DEFAULT_SMPLX_TARGET_NAMES = [
     "Pelvis", "L_Hip", "R_Hip", "Spine1", "L_Knee", "R_Knee",
@@ -34,6 +47,7 @@ class SmplxDataSource(DataSource):
     gender: str = "neutral"
     target_names_override: list[str] | None = None
     betas: list[float] | None = None
+    use_smplx_base_pose: bool = True
     metadata: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -62,17 +76,21 @@ class SmplxDataSource(DataSource):
         if self._motion_data is None:
             positions, orientations, root_orient, trans, framerate, metadata = self._load_arrays(self.motion_file)
             names = self.target_names_override or _default_target_names(positions.shape[1])
-            
+
             # Compute source height: try betas first, then trajectory, then None
             source_height = self.compute_human_height()
             if source_height is None:
                 source_height = self.estimate_height_from_trajectory(positions)
             
+            # Correct root_orient from SMPLX T-pose frame to body-aligned frame
+            if self.use_smplx_base_pose and root_orient is not None:
+                root_orient_mat = Rotation.from_rotvec(root_orient).as_matrix()
+                root_orient = Rotation.from_matrix(root_orient_mat @ _SMPLX_ROOT_OFFSET).as_rotvec()
             self._motion_data = MotionData(
                 positions=positions,
                 target_names=names,
-                root_orientations=root_orient,
-                root_translations=trans,
+                root_orientations=root_orient if self.use_smplx_base_pose else None,
+                root_translations=trans if self.use_smplx_base_pose else None,
                 framerate=framerate,
                 source_height=source_height,
                 metadata={**self.metadata, **metadata, "source_type": "smplx", "joint_orientations": orientations},
@@ -348,6 +366,7 @@ def create_smplx_data_source(
         gender=option("gender", default="neutral"),
         target_names_override=target_names,
         betas=option("betas", "smplx_betas"),
+        use_smplx_base_pose=option("use_smplx_base_pose", default=False),
     )
 
 
