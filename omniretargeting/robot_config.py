@@ -2,18 +2,33 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
 from typing import Any, Dict
+
+_PYTHON_PKG_PREFIX = "package://"
 
 
 def _resolve_path(value: str | None, config_dir: Path) -> str | None:
     if not value:
         return value
-    path = Path(value)
-    if not path.is_absolute():
-        path = (config_dir / path).resolve()
-    return str(path)
+    if value.startswith(_PYTHON_PKG_PREFIX):
+        rest = value[len(_PYTHON_PKG_PREFIX):]
+        package_name, _, subpath = rest.partition("/")
+        mod = importlib.import_module(package_name)
+        if mod.__file__ is None:
+            raise ValueError(f"Package '{package_name}' has no __file__; cannot resolve path.")
+        resolved = (Path(mod.__file__).parent / subpath).resolve()
+    else:
+        path = Path(value)
+        if not path.is_absolute():
+            path = (config_dir / path).resolve()
+        resolved = path
+
+    if not resolved.exists():
+        raise FileNotFoundError(f"URDF file not found at resolved path: {resolved}")
+    return str(resolved)
 
 
 def _ensure_dict(value: Any, name: str) -> dict[str, Any]:
