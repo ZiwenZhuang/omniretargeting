@@ -333,7 +333,15 @@
       "wall_normal_z_threshold": 0.35,
       "wall_x_dominance_threshold": 0.5
     },
-    "replace_cylinders_with_capsules": false
+    "replace_cylinders_with_capsules": false,
+    "joint_regularization_boost": {
+      "default": 0.001,
+      "joints": {
+        "*shoulder*roll*": 0.2,
+        "*shoulder*yaw*": 0.2,
+        "*hip*yaw*": 0.2
+      }
+    }
   },
   "link_offset_config": {
     "Left_Hip_Roll": [

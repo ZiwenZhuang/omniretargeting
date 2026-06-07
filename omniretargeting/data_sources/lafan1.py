@@ -210,8 +210,15 @@ def _read_bvh(filename: str | Path) -> dict:
 # ---------------------------------------------------------------------------
 # Coordinate transform: BVH (Y-up, cm) to omniretargeting (Z-up, m)
 # ---------------------------------------------------------------------------
+# Step 1: Rotate -90deg around X to map BVH Y-up to Z-up.
+#   BVH: X=right, Y=up, Z=forward
+#   After step 1: X=right, Z=up, -Y=forward  (character faces -Y)
+# Step 2: Rotate +90deg around Z to align character forward (-Y) with robot forward (+X).
+#   After step 2: X=forward, Y=right, Z=up   (character faces +X)
 
-_ROTATION_MATRIX = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]], dtype=np.float32)
+_ROTATION_Y_TO_Z = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]], dtype=np.float32)  # -90deg X
+_ROTATION_FORWARD = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]], dtype=np.float32)  # +90deg Z
+_ROTATION_MATRIX = (_ROTATION_FORWARD @ _ROTATION_Y_TO_Z).astype(np.float32)
 _ROTATION_QUAT = Rotation.from_matrix(_ROTATION_MATRIX).as_quat(scalar_first=True).astype(np.float32)
 
 
@@ -275,14 +282,14 @@ class Lafan1DataSource(DataSource):
         # Apply coordinate transform and cm to m conversion
         transformed_positions = global_positions @ _ROTATION_MATRIX.T / 100.0
 
-        # Transform root quaternion for each frame
-        root_quats = np.zeros((num_frames, 4), dtype=np.float32)
-        for f in range(num_frames):
-            root_quats[f] = _quat_mul(_ROTATION_QUAT, global_quats[f, 0])
+        # Root orientations are estimated from joint positions by the retargeting pipeline
 
-        root_orientations = Rotation.from_quat(
-            root_quats[:, [1, 2, 3, 0]]  # scalar-first to scalar-last for scipy
-        ).as_rotvec().astype(np.float32)
+        # Ground the motion: ensure feet touch Z=0 at lowest point
+        foot_names_for_ground = [n for n in names if n in ("LeftFoot", "RightFoot")]
+        if foot_names_for_ground:
+            foot_indices_ground = [names.index(n) for n in foot_names_for_ground]
+            min_foot_z = float(np.min(transformed_positions[:, foot_indices_ground, 2]))
+            transformed_positions[:, :, 2] -= min_foot_z
 
         root_translations = transformed_positions[:, 0, :].copy()
 
@@ -321,7 +328,7 @@ class Lafan1DataSource(DataSource):
         self._motion_data = MotionData(
             positions=transformed_positions,
             target_names=list(names),
-            root_orientations=root_orientations,
+            root_orientations=None,  # estimated from joint positions by the pipeline
             root_translations=root_translations,
             framerate=framerate,
             source_height=source_height,
