@@ -8,9 +8,10 @@ from pathlib import Path
 import joblib
 import numpy as np
 import trimesh
+from scipy.spatial.transform import Rotation
 
 from .base import DataSource, MotionData
-from .smplx import DEFAULT_SMPLX_TARGET_NAMES
+from .smplx import DEFAULT_SMPLX_TARGET_NAMES, _SMPLX_ROOT_OFFSET
 
 
 @dataclass
@@ -28,6 +29,7 @@ class OmomoDataSource(DataSource):
     target_names: list[str] | None = None
     model_directory: str | None = None
     framerate: float = 30.0
+    use_smplx_base_pose: bool = True
 
     def __post_init__(self):
         self.sequence_file = Path(self.sequence_file)
@@ -185,11 +187,16 @@ class OmomoDataSource(DataSource):
             object_pose = self._object_pose_data()
             object_centroid_local = np.asarray(self.object_mesh.vertices, dtype=np.float32).mean(axis=0)
 
+            # Correct root_orient from SMPLX T-pose frame to body-aligned frame
+            if self.use_smplx_base_pose and root_orient is not None:
+                root_orient_mat = Rotation.from_rotvec(root_orient).as_matrix()
+                root_orient = Rotation.from_matrix(root_orient_mat @ _SMPLX_ROOT_OFFSET).as_rotvec()
+
             self._motion_data = MotionData(
                 positions=positions,
                 target_names=target_names,
-                root_orientations=root_orient,
-                root_translations=positions[:, 0, :],
+                root_orientations=root_orient if self.use_smplx_base_pose else None,
+                root_translations=positions[:, 0, :] if self.use_smplx_base_pose else None,
                 framerate=self.framerate,
                 source_height=self._estimate_height_from_positions(positions),
                 object_points=object_points,
@@ -213,6 +220,16 @@ class OmomoDataSource(DataSource):
 
 
 def create_omomo_data_source(motion_file, source_config, runtime_options):
+    source_config = dict(source_config or {})
+    runtime_options = dict(runtime_options or {})
+
+    def option(*keys, default=None):
+        for container in (runtime_options, source_config):
+            for key in keys:
+                if key in container and container[key] is not None:
+                    return container[key]
+        return default
+
     sequence_index = runtime_options.get("sequence_index", 0)
     data_root = runtime_options.get("data_root", "/localhdd/Datasets/OMOMO")
     n_object_samples = runtime_options.get("n_object_samples", 100)
@@ -226,6 +243,7 @@ def create_omomo_data_source(motion_file, source_config, runtime_options):
         n_object_samples=n_object_samples,
         target_names=target_names_override,
         model_directory=model_directory,
+        use_smplx_base_pose=option("use_smplx_base_pose", default=False),
     )
 
 
