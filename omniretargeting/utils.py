@@ -267,6 +267,68 @@ def calculate_laplacian_matrix(vertices, adj_list, epsilon=1e-6, uniform_weight=
     return laplacian_matrix
 
 
+def estimate_body_height(
+    positions: np.ndarray,
+    target_names: list[str],
+    *,
+    head_joint: str = "Head",
+    foot_joints: tuple[str, str] = ("L_Foot", "R_Foot"),
+    head_top_offset: float = 0.12,
+    fallback_height: float = 1.75,
+    min_height: float = 1.4,
+    max_height: float = 2.2,
+) -> float | None:
+    """Estimate human height from joint positions by finding the head-to-foot distance.
+
+    Uses the first frame (T-pose or standing frame). If named joints are not found
+    in target_names, returns *fallback_height*. If *positions* is empty or ``None``,
+    returns ``None``.
+
+    Args:
+        positions: Joint positions array of shape ``(T, J, 3)``.
+        target_names: List of joint names corresponding to the J axis.
+        head_joint: Name of the head joint in *target_names*.
+        foot_joints: Names of the two foot joints in *target_names*.
+        head_top_offset: Additional offset to add for the top of the head.
+        fallback_height: Height to return if named joints are not found.
+        min_height: Minimum valid height for clipping.
+        max_height: Maximum valid height for clipping.
+
+    Returns:
+        Estimated height in meters, or ``None`` if *positions* is empty or ``None``.
+    """
+    if positions is None or len(positions) == 0:
+        return None
+
+    try:
+        head_idx = target_names.index(head_joint)
+    except ValueError:
+        return fallback_height
+
+    if head_idx >= positions.shape[1]:
+        return fallback_height
+
+    foot_indices: list[int] = []
+    for fn in foot_joints:
+        try:
+            idx = target_names.index(fn)
+            if idx < positions.shape[1]:
+                foot_indices.append(idx)
+        except ValueError:
+            pass
+
+    if not foot_indices:
+        return fallback_height
+
+    try:
+        head_z = float(positions[0, head_idx, 2])
+        feet_z = min(float(positions[0, fi, 2]) for fi in foot_indices)
+        estimated_height = head_z - feet_z + head_top_offset
+        return float(np.clip(estimated_height, min_height, max_height))
+    except (IndexError, TypeError):
+        return fallback_height
+
+
 def validate_robot_joint_mapping(
     robot_model,
     joint_mapping: dict,

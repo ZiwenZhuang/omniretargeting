@@ -56,6 +56,7 @@
 - ✅ Height estimation moved to `SmplxDataSource`
 - ✅ Base orientation uses `motion_data.root_orientations` (provided by DataSource)
 - ✅ OmniRetargeter is now fully source-agnostic
+- ✅ `height_estimation` config (head_top_offset, head_joint, foot_joints) wired through all DataSources — see [[height-estimation-config]]
 
 **API Parameters:**
 - `robot_urdf_path`, `terrain_mesh_path`, `joint_mapping`, `robot_height`, `retargeting`, `link_offset_config` - ✅ Source-agnostic

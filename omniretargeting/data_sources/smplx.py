@@ -11,6 +11,7 @@ from scipy.spatial.transform import Rotation
 
 from omniretargeting.data_sources.base import DataSource, MotionData, MotionFrame
 from omniretargeting.data_sources.registry import register_data_source
+from omniretargeting.utils import estimate_body_height
 
 # T-pose body-aligned rotation: maps body-frame to SMPL-X T-pose frame.
 # SMPL-X canonical pose has body facing approx. +Z, Y-up.
@@ -80,7 +81,7 @@ class SmplxDataSource(DataSource):
             # Compute source height: try betas first, then trajectory, then None
             source_height = self.compute_human_height()
             if source_height is None:
-                source_height = self.estimate_height_from_trajectory(positions)
+                source_height = self.estimate_height_from_trajectory(positions, names)
             
             # Correct root_orient from SMPLX T-pose frame to body-aligned frame
             if self.use_smplx_base_pose and root_orient is not None:
@@ -138,62 +139,17 @@ class SmplxDataSource(DataSource):
             return None
 
 
-    def estimate_height_from_trajectory(self, positions: np.ndarray) -> float | None:
-        """
-        Estimate human height from trajectory positions.
-        
-        Uses head and foot positions across all frames to estimate standing height.
-        
+    def estimate_height_from_trajectory(self, positions: np.ndarray, target_names: list[str]) -> float | None:
+        """Estimate human height from trajectory positions using shared utility.
+
         Args:
-            positions: Motion positions array of shape (T, J, 3)
-            
+            positions: Motion positions array of shape ``(T, J, 3)``.
+            target_names: List of joint names corresponding to the J axis.
+
         Returns:
-            Estimated height in meters, or None if estimation fails
+            Estimated height in meters, or ``None`` if estimation fails.
         """
-        if positions is None or len(positions) == 0:
-            return None
-        
-        # Default SMPL-X joint indices
-        head_idx = 15
-        foot_indices = [10, 11]
-        head_top_offset = 0.12
-        
-        # Try to use target names if available
-        if self.target_names_override:
-            try:
-                head_idx = self.target_names_override.index("Head")
-            except ValueError:
-                pass
-            
-            foot_indices = []
-            for foot_name in ["L_Foot", "R_Foot"]:
-                try:
-                    foot_indices.append(self.target_names_override.index(foot_name))
-                except ValueError:
-                    pass
-            if not foot_indices:
-                foot_indices = [10, 11]
-        
-        # Check if we have enough joints
-        if positions.shape[1] <= head_idx or not all(idx < positions.shape[1] for idx in foot_indices):
-            return None
-        
-        try:
-            # Calculate height per frame: Head Z - Min Foot Z
-            head_z = positions[:, head_idx, 2]
-            feet_z = np.min(positions[:, foot_indices, 2], axis=1)
-            heights = head_z - feet_z
-            
-            # Use maximum height (standing pose) + head top offset
-            estimated_height = float(np.max(heights) + head_top_offset)
-            
-            # Sanity check: reasonable human range
-            estimated_height = np.clip(estimated_height, 1.4, 2.2)
-            
-            return estimated_height
-        except Exception as e:
-            print(f"[SmplxDataSource] Failed to estimate height from trajectory: {e}")
-            return None
+        return estimate_body_height(positions, target_names, head_joint="Head", foot_joints=("L_Foot", "R_Foot"))
 
     def _load_arrays(
         self,
@@ -360,6 +316,7 @@ def create_smplx_data_source(
 
     target_names = option("target_names_override", "target_names", "joint_names")
     model_directory = option("model_directory", "model_dir", "smpl_model_dir", "smplx_model_dir")
+
     return SmplxDataSource(
         motion_file=motion_file,
         model_directory=model_directory,
