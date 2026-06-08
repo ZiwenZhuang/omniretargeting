@@ -12,7 +12,7 @@ import mujoco
 import numpy as np
 
 from omniretargeting.robot_config import load_robot_config
-from omniretargeting.utils import detect_robot_height
+from omniretargeting.utils import resolve_robot_height
 
 
 SMPLX_JOINT_NAMES = [
@@ -189,7 +189,7 @@ def _plot_visualization(
     body_positions: np.ndarray,
     body_rotations: np.ndarray,
     joint_mapping: dict[str, str],
-    link_offset_config: dict[str, object] | None,
+    link_offset_map: dict[str, object] | None,
     output_path: Path | None = None,
 ) -> None:
     fig = plt.figure(figsize=(14, 11))
@@ -310,8 +310,8 @@ def _plot_visualization(
             fontsize=7,
             color="black",
         )
-        if link_offset_config and body_name in link_offset_config:
-            offset_local = np.asarray(link_offset_config[body_name], dtype=float).reshape(3)
+        if link_offset_map and body_name in link_offset_map:
+            offset_local = np.asarray(link_offset_map[body_name], dtype=float).reshape(3)
             offset_world = body_rotations[body_idx] @ offset_local
             offset_target = robot_point + offset_world
             offset_target_points.append(offset_target)
@@ -419,18 +419,27 @@ def main() -> None:
         robot_urdf_path,
         default_joint_positions=default_joint_positions if default_joint_positions else None,
     )
+    # Normalize joint_mapping: handle mixed string/dict values and build link offset map
+    normalized_mapping = {}
+    link_offset_map = {}
+    for src_name, value in joint_mapping.items():
+        if isinstance(value, dict):
+            link = value["robot_link"]
+            normalized_mapping[src_name] = link
+            offset = value.get("offset", [0.0, 0.0, 0.0])
+            if np.any(np.asarray(offset, dtype=float) != 0):
+                link_offset_map[link] = offset
+        else:
+            normalized_mapping[src_name] = value
+    joint_mapping = normalized_mapping
+
     missing_bodies = sorted({body_name for body_name in joint_mapping.values() if body_name not in body_ids})
     if missing_bodies:
         raise ValueError(f"Mapped robot bodies were not found in the URDF: {missing_bodies}")
 
-    link_offset_config = robot_config.get("link_offset_config")
-    if link_offset_config is not None and not isinstance(link_offset_config, dict):
-        raise ValueError("Robot config 'link_offset_config' must be a JSON object when provided.")
-
-    robot_height = robot_config.get("robot_height")
-    if robot_height is None and args.scale_with_robot:
-        robot_height = detect_robot_height(model, data)
-    if not args.scale_with_robot:
+    if args.scale_with_robot:
+        robot_height = resolve_robot_height(robot_config, model, data)
+    else:
         robot_height = None
 
     pelvis_body_name = joint_mapping.get("Pelvis")
@@ -461,7 +470,7 @@ def main() -> None:
         body_positions=body_positions,
         body_rotations=body_rotations,
         joint_mapping=joint_mapping,
-        link_offset_config=link_offset_config,
+        link_offset_map=link_offset_map,
         output_path=output_path,
     )
 
@@ -472,7 +481,7 @@ def main() -> None:
     robot_height_str = f"{robot_height:.3f}" if robot_height else "none (unscaled)"
     print(f"[visualize_offsets] robot_height={robot_height_str} m")
     print(f"[visualize_offsets] mapped_links={len(joint_mapping)}")
-    print(f"[visualize_offsets] link_offsets={0 if not link_offset_config else len(link_offset_config)}")
+    print(f"[visualize_offsets] link_offsets={0 if not link_offset_map else len(link_offset_map)}")
     if output_path is not None:
         print(f"[visualize_offsets] output={output_path}")
 

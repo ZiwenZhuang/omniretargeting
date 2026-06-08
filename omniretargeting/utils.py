@@ -362,7 +362,10 @@ def validate_robot_joint_mapping(
         if body_name:
             robot_bodies.add(body_name)
     
-    mapped_bodies = set(joint_mapping.values())
+    mapped_bodies = set(
+        v["robot_link"] if isinstance(v, dict) else v
+        for v in joint_mapping.values()
+    )
     missing_bodies = mapped_bodies - robot_bodies
     
     if missing_bodies and raise_on_missing:
@@ -418,11 +421,23 @@ def create_flat_terrain(size: float = 10.0, height: float = 0.0, n_points: int =
     return trimesh.Trimesh(vertices=vertices, faces=faces)
 
 
+def resolve_robot_height(config: dict, model: "mujoco.MjModel", data: "mujoco.MjData") -> float:
+    """Get robot height from config dict, falling back to MuJoCo geom detection.
+
+    Checks ``robot_height`` key in *config* first; if absent, calls
+    :func:`detect_robot_height` as a fallback.
+    """
+    height = config.get("robot_height")
+    if height is not None:
+        return float(height)
+    return detect_robot_height(model, data)
+
+
 def detect_robot_height(model: "mujoco.MjModel", data: "mujoco.MjData") -> float:
     """Detect robot height from MuJoCo geom extents (includes head casing, etc.).
 
-    Shared by core.py, and {data}_visualize.py to avoid code duplication. 
-    This is a fallback when height_estimation is not provided in the JSON config.
+    Shared by core.py, and the ``_visualize.py`` scripts to avoid code duplication.
+    Prefer :func:`resolve_robot_height` at call sites that already have a config dict.
     """
     mujoco.mj_resetData(model, data)
     if model.njnt > 0 and model.jnt_type[0] == mujoco.mjtJoint.mjJNT_FREE and model.nq >= 7:

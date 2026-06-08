@@ -48,7 +48,6 @@ class OmniRetargeter:
         source_target_names: Optional[List[str]] = None,
         base_orientation: Optional[Dict[str, str]] = None,
         retargeting: Optional[Dict[str, Any]] = None,
-        link_offset_config: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize the OmniRetargeter.
@@ -62,7 +61,6 @@ class OmniRetargeter:
 
             base_orientation: Optional source target names used for base orientation estimation
             retargeting: Optional solver/retargeting settings forwarded to interaction retargeter
-            link_offset_config: Optional per-link offset dictionary forwarded to GenericInteractionRetargeter.
         """
         self.robot_urdf_path = Path(robot_urdf_path)
         self.terrain_mesh_path = Path(terrain_mesh_path)
@@ -76,7 +74,6 @@ class OmniRetargeter:
 
         self.base_orientation_config = dict(base_orientation or {})
         self.retargeting_config = dict(retargeting or {})
-        self.link_offset_config = link_offset_config
 
         # Create mapping from source target names to indices.
         self.source_target_indices = {}
@@ -293,7 +290,6 @@ class OmniRetargeter:
             source_target_names=self.valid_source_target_names,
             replace_cylinders_with_capsules=bool(self.retargeting_config.get("replace_cylinders_with_capsules", False)),
             hard_penetration_constraint=self.retargeting_config.get("penetration_resolver", "hard_constraint") == "hard_constraint",
-            link_offset_config=self.link_offset_config,
             joint_regularization_boost=self.retargeting_config.get("joint_regularization_boost"),
         )
 

@@ -131,7 +131,6 @@ def _build_retargeter_kwargs(robot_config: dict, terrain_mesh_path: Path | str, 
         "source_target_names": robot_config.get("source_target_names"),
         "base_orientation": robot_config.get("base_orientation"),
         "retargeting": robot_config.get("retargeting"),
-        "link_offset_config": robot_config.get("link_offset_config"),
     }
 
 def _print_and_skip(reason: str) -> None:
@@ -669,7 +668,6 @@ def test_create_stream_state_passes_hard_penetration_constraint():
         "replace_cylinders_with_capsules": True,
         "penetration_resolver": "xyz_nudge",
     }
-    retargeter.link_offset_config = None
     retargeter.valid_source_target_names = ["Pelvis"]
     retargeter.base_orientation_config = {}
 
@@ -690,7 +688,7 @@ def test_create_stream_state_passes_hard_penetration_constraint():
         source_target_names=["Pelvis"],
         replace_cylinders_with_capsules=True,
         hard_penetration_constraint=False,
-        link_offset_config=None,
+        joint_regularization_boost=None,
     )
 
 @pytest.mark.parametrize(("robot_name", "profile_path"), ROBOT_PROFILE_CASES)

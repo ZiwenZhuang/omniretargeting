@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import sys
 from pathlib import Path
@@ -24,9 +25,24 @@ import matplotlib.pyplot as plt
 import mujoco
 import numpy as np
 
-from omniretargeting.data_sources.lafan1 import _read_bvh, _quat_fk, _ROTATION_MATRIX
+from omniretargeting.data_sources.lafan1 import _quat_fk, _ROTATION_MATRIX
 from omniretargeting.robot_config import load_robot_config
-from omniretargeting.utils import detect_robot_height
+from omniretargeting.utils import resolve_robot_height
+
+
+def _get_bvh_parser(source_type: str):
+    """Dynamically import the BVH parser module for *source_type*.
+
+    Each BVH data source module is expected to export ``_read_bvh``.
+    """
+    module = importlib.import_module(f"omniretargeting.data_sources.{source_type}")
+    parser = getattr(module, "_read_bvh", None)
+    if parser is None:
+        raise ValueError(
+            f"No BVH parser found in omniretargeting.data_sources.{source_type}. "
+            f"Expected '_read_bvh'."
+        )
+    return parser
 
 
 def _set_equal_axes(ax, points):
@@ -141,15 +157,26 @@ def main():
         print(f"Source type '{args.source_type}' not found. Available: {avail}")
         sys.exit(1)
 
-    joint_mapping = source_entry.get("target_mapping", {})
-    link_offset_config = source_entry.get("link_offset_config",
-                                          robot_config.get("link_offset_config"))
+    raw_mapping = source_entry.get("target_mapping", {})
+    # Normalize target_mapping: handle mixed string/dict values and build link offset map
+    joint_mapping = {}
+    link_offset_map = {}
+    for src_name, value in raw_mapping.items():
+        if isinstance(value, dict):
+            link = value["robot_link"]
+            joint_mapping[src_name] = link
+            offset = value.get("offset", [0.0, 0.0, 0.0])
+            if np.any(np.asarray(offset, dtype=float) != 0):
+                link_offset_map[link] = offset
+        else:
+            joint_mapping[src_name] = value
     pose_name = source_entry.get("default_pose_on_robot", "T-Pose")
     print(f"[bvh_viz] source={args.source_type}, robot_pose={pose_name}, "
           f"mapped_joints={len(joint_mapping)}")
 
-    # Load LAFAN1 default pose
-    bvh = _read_bvh(args.bvh_file)
+    # Load source default pose
+    parser = _get_bvh_parser(args.source_type)
+    bvh = parser(args.bvh_file)
     n = len(bvh["names"])
     quats = bvh["quats"][:1]  # first frame actual rotations
     pos = bvh["positions"][:1]  # first frame local positions
@@ -184,7 +211,7 @@ def main():
         data_source = create_data_source(args.source_type, args.bvh_file)
         src_height = data_source.source_height or 1.75
 
-        robot_height = detect_robot_height(model, data)
+        robot_height = resolve_robot_height(robot_config, model, data)
         robot_foot_z = min(
             body_positions[body_ids.get("left_ankle_roll_link", 0), 2],
             body_positions[body_ids.get("right_ankle_roll_link", 0), 2],
@@ -218,9 +245,11 @@ def main():
     # ---- Plot ----
     fig = plt.figure(figsize=(21, 10))
 
-    # Left: LAFAN1 skeleton
+    source_label = args.source_type.upper()
+
+    # Left: source skeleton
     ax1 = fig.add_subplot(121, projection="3d")
-    ax1.set_title("LAFAN1 Default Pose (Rest-Pose)\n(green=mapped, gray=unmapped)",
+    ax1.set_title(f"{source_label} Default Pose\n(green=mapped, gray=unmapped)",
                   fontsize=12, fontweight="bold")
     for i, (name, parent) in enumerate(zip(src_names, src_parents)):
         if parent >= 0:
@@ -244,7 +273,7 @@ def main():
 
     # Right: both + mapping
     ax2 = fig.add_subplot(122, projection="3d")
-    ax2.set_title(f"LAFAN1 (blue) <-> Robot {pose_name} (red)\n"
+    ax2.set_title(f"{source_label} (blue) <-> Robot {pose_name} (red)\n"
                   f"{len(joint_mapping)} mapped joints",
                   fontsize=12, fontweight="bold")
 
@@ -259,7 +288,7 @@ def main():
         if name and body_idx > 0:
             ax2.scatter(*body_positions[body_idx], c="red", s=15)
 
-    # LAFAN1 skeleton offset
+    # Source skeleton offset
     offset = np.array([-0.4, 0.0, 0.0])
     for i, (name, parent) in enumerate(zip(src_names, src_parents)):
         if parent >= 0:
@@ -290,8 +319,8 @@ def main():
         mid = (sp + rp) / 2
         ax2.text(mid[0], mid[1], mid[2], src_name, fontsize=5, color="darkred")
 
-        if link_offset_config and link_name in link_offset_config:
-            o_local = np.asarray(link_offset_config[link_name], dtype=float).reshape(3)
+        if link_name in link_offset_map:
+            o_local = np.asarray(link_offset_map[link_name], dtype=float).reshape(3)
             o_world = body_rotations[body_ids[link_name]] @ o_local
             ot = rp + o_world
             ax2.plot([rp[0], ot[0]], [rp[1], ot[1]], [rp[2], ot[2]],

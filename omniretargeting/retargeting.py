@@ -37,7 +37,7 @@ class GenericInteractionRetargeter:
         robot_model: mujoco.MjModel,
         robot_data: mujoco.MjData,
         terrain_mesh: trimesh.Trimesh,
-        joint_mapping: Dict[str, str],
+        joint_mapping: Dict[str, str | Dict[str, object]],
         robot_height: float,
         q_a_init_idx: int = -7,
         step_size: float = 0.2,
@@ -48,7 +48,6 @@ class GenericInteractionRetargeter:
         source_target_names: Optional[List[str]] = None,
         replace_cylinders_with_capsules: bool = False,
         hard_penetration_constraint: bool = False,
-        link_offset_config: Optional[Dict[str, np.ndarray]] = None,
         joint_regularization_boost: Optional[Dict] = None,
     ):
         """Initialize the generic retargeter.
@@ -57,7 +56,10 @@ class GenericInteractionRetargeter:
             robot_model: MuJoCo model of the robot
             robot_data: MuJoCo data for the robot
             terrain_mesh: Terrain mesh (already scaled if needed)
-            joint_mapping: Mapping from source target names to robot link names
+            joint_mapping: Mapping from source target names to robot link names.
+                Each value is either a string (link name, zero offset) or a dict
+                with keys ``link`` (robot link name) and ``offset`` (optional
+                3-element local-frame offset vector [dx, dy, dz], default [0,0,0]).
             robot_height: Height of the robot
             q_a_init_idx: Index where optimization variables start
             step_size: Trust region size for SQP
@@ -74,42 +76,28 @@ class GenericInteractionRetargeter:
             hard_penetration_constraint: If True, enforce penetration
                 constraints inside the optimizer. If False, skip them so
                 outer post-processing can handle contact correction.
-            link_offset_config: Optional per-link offset dictionary. Keys are robot
-                link names (values in joint_mapping), values are 3-element local-frame
-                offset vectors [dx, dy, dz] (meters). The offset represents the
-                displacement from the link body origin to the actual target position
-                (e.g., a source landmark or keypoint position). The local frame is the link
-                coordinate system as expressed in the URDF.
         """
         self.robot_model = robot_model
         self.robot_data = robot_data
         self.terrain_mesh = terrain_mesh
-        self.joint_mapping = joint_mapping  # This should already be filtered to valid source targets only.
         self.robot_height = robot_height
         self.hard_penetration_constraint = hard_penetration_constraint
         self.joint_regularization_boost = joint_regularization_boost
 
-        # ---- link offset configuration ----
-        # Normalize offsets to numpy arrays and validate keys.
-        # Keys can be either source target names (per-target offset) or robot link
-        # names (per-link offset shared by all targets on that link).
-        self.link_offset_config: Dict[str, np.ndarray] = {}
-        if link_offset_config:
-            robot_link_names = set(joint_mapping.values())
-            source_target_set = set(joint_mapping.keys())
-            for key, offset in link_offset_config.items():
-                # Accept keys that are either source target names or robot link names
-                if key not in source_target_set and key not in robot_link_names:
-                    import warnings
-                    warnings.warn(
-                        f"link_offset_config key {key} is neither a source target name "
-                        f"nor a robot link name. Skipping.",
-                        UserWarning
-                    )
-                    continue
-                self.link_offset_config[key] = np.asarray(offset, dtype=float).reshape(3)
-            print(f"Loaded link offsets for {len(self.link_offset_config)} target(s): "
-                  f"{list(self.link_offset_config.keys())}")
+        # ---- Parse target mapping (supports mixed string/dict values) ----
+        # Extract link names and optional local-frame offsets for each source target.
+        # Format: {target_name: "link_name"} or {target_name: {"robot_link": "link_name", "offset": [dx,dy,dz]}}
+        self.joint_mapping: Dict[str, str] = {}
+        self.target_offset_map: Dict[str, np.ndarray] = {}
+        for target_name, value in joint_mapping.items():
+            if isinstance(value, dict):
+                link_name = value["robot_link"]
+                offset = np.asarray(value.get("offset", [0.0, 0.0, 0.0]), dtype=float).reshape(3)
+                self.joint_mapping[target_name] = link_name
+                self.target_offset_map[target_name] = offset
+            else:
+                self.joint_mapping[target_name] = value
+                self.target_offset_map[target_name] = np.zeros(3, dtype=float)
 
         # CRITICAL: Store ordered source target names to ensure consistent ordering.
         # This ensures source_target_positions[i] matches robot_points[i] for all i.
@@ -828,10 +816,10 @@ class GenericInteractionRetargeter:
                 # Compute base Jacobian for body origin (3 x nq)
                 J_base = self._calc_contact_jacobian_from_point(body_id)
 
-                # Apply offset if configured (check per-target first, then per-link)
-                offset_key = target_name if target_name in self.link_offset_config else link_name
-                if offset_key in self.link_offset_config:
-                    o_local = self.link_offset_config[offset_key]
+                # Apply offset from merged target_mapping (if non-zero)
+                offset = self.target_offset_map.get(target_name)
+                if offset is not None and np.any(offset != 0):
+                    o_local = offset
                     R_WB = self.robot_data.xmat[body_id].reshape(3, 3)
                     o_world = R_WB @ o_local
                     pos = pos + o_world  # p_target = p_body + R @ o_local

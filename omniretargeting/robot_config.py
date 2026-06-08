@@ -105,9 +105,6 @@ def load_robot_config(config_path: str | Path) -> Dict[str, Any]:
     if robot_height is not None:
         config["robot_height"] = robot_height
 
-    if "link_offset_config" in robot or "link_offset_config" in config:
-        config["link_offset_config"] = robot.get("link_offset_config", config.get("link_offset_config"))
-
     target_mapping = selected_source.get("target_mapping", config.get("joint_mapping"))
     if not isinstance(target_mapping, dict) or not target_mapping:
         raise ValueError("Robot config must contain non-empty 'joint_mapping' or selected source 'target_mapping'.")
@@ -121,6 +118,8 @@ def load_robot_config(config_path: str | Path) -> Dict[str, Any]:
     for key in ("height_estimation", "base_orientation"):
         if key in selected_source:
             config[key] = selected_source[key]
+        elif key in config:
+            pass  # already present at top level from the raw JSON
 
     source_options = selected_source.get("adapter_options")
     if source_options is not None and not isinstance(source_options, dict):
