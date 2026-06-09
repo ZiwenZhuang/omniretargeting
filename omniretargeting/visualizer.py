@@ -78,6 +78,38 @@ def create_flat_terrain(size: float = 10.0) -> trimesh.Trimesh:
     return mesh
 
 
+def _ensure_mujoco_compiler_settings(xml_str: str) -> str:
+    """Ensure ``<mujoco><compiler>`` settings are present in a URDF XML string.
+
+    Injects/updates the ``<mujoco><compiler>`` element so that MuJoCo
+    preserves visual geometry (``discardvisuals="false"``) and resolves
+    mesh paths relative to the URDF directory (``meshdir="./"``).
+
+    Some URDF files use the wrong attribute name ``discardvisual``
+    (singular), which MuJoCo silently ignores, defaulting to
+    ``discardvisuals="true"`` and discarding all visual meshes.
+    This function corrects that before compilation.
+
+    If a ``<mujoco>`` or ``<compiler>`` element already exists, its other
+    children/attributes are preserved; only the two target attributes are
+    set on ``<compiler>``.
+    """
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring(xml_str)
+    mujoco = root.find("mujoco")
+    if mujoco is None:
+        mujoco = ET.SubElement(root, "mujoco")
+        print("Added missing <mujoco> element to URDF XML for visualization.")
+    compiler = mujoco.find("compiler")
+    if compiler is None:
+        compiler = ET.SubElement(mujoco, "compiler")
+        print("Added missing <compiler> element to URDF XML for visualization.")
+    compiler.set("discardvisual", "false")
+    compiler.set("meshdir", "./")
+    return ET.tostring(root, encoding="unicode")
+
+
 @contextlib.contextmanager
 def temporary_visualization_scene(
     urdf_path,
@@ -103,8 +135,10 @@ def temporary_visualization_scene(
         from omniretargeting.utils import _has_floating_joint, _inject_floating_joint
         if not _has_floating_joint(xml_str):
             xml_str = _inject_floating_joint(xml_str)
+        xml_str = _ensure_mujoco_compiler_settings(xml_str)
         tmp_urdf = urdf_path_obj.parent / f"._omnire_vis_{os.getpid()}.urdf"
         tmp_urdf.write_text(xml_str)
+        print(f"write to tmp_urdf: {tmp_urdf}")
         try:
             old_cwd = os.getcwd()
             os.chdir(str(urdf_path_obj.parent))
@@ -113,8 +147,9 @@ def temporary_visualization_scene(
             base_xml_path = os.path.join(temp_dir, "robot.xml")
             mujoco.mj_saveLastXML(base_xml_path, base_model)
         finally:
-            if tmp_urdf.exists():
-                tmp_urdf.unlink()
+            pass
+            # if tmp_urdf.exists():
+            #     tmp_urdf.unlink()
 
         tree = ET.parse(base_xml_path)
         root = tree.getroot()
@@ -167,7 +202,7 @@ def temporary_visualization_scene(
     finally:
         import shutil
 
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        # shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 

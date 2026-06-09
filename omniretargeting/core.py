@@ -93,7 +93,7 @@ class OmniRetargeter:
             else:
                 raise ValueError(
                     f"Source target '{source_target_name}' not found in source target names. "
-                    f"Available targets: {list(self.source_target_indices.keys())[:10]}..."
+                    f"Available targets: {list(self.source_target_indices.keys())}"
                 )
 
         if len(self.mapped_source_target_indices) == 0:
