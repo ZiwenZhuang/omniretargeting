@@ -139,17 +139,16 @@ def temporary_visualization_scene(
         tmp_urdf = urdf_path_obj.parent / f"._omnire_vis_{os.getpid()}.urdf"
         tmp_urdf.write_text(xml_str)
         print(f"write to tmp_urdf: {tmp_urdf}")
+        old_cwd = os.getcwd()
         try:
-            old_cwd = os.getcwd()
             os.chdir(str(urdf_path_obj.parent))
             base_model = mujoco.MjModel.from_xml_path(str(tmp_urdf))
-            os.chdir(old_cwd)
             base_xml_path = os.path.join(temp_dir, "robot.xml")
             mujoco.mj_saveLastXML(base_xml_path, base_model)
         finally:
-            pass
-            # if tmp_urdf.exists():
-            #     tmp_urdf.unlink()
+            os.chdir(old_cwd)
+            if tmp_urdf.exists():
+                tmp_urdf.unlink()
 
         tree = ET.parse(base_xml_path)
         root = tree.getroot()
@@ -202,7 +201,7 @@ def temporary_visualization_scene(
     finally:
         import shutil
 
-        # shutil.rmtree(temp_dir, ignore_errors=True)
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 
