@@ -105,7 +105,7 @@
         "L_Wrist": {
           "robot_link": "left_elbow_link",
           "offset": [
-            0.25,
+            0.15,
             0.0,
             0.0
           ]
@@ -113,7 +113,7 @@
         "R_Wrist": {
           "robot_link": "right_elbow_link",
           "offset": [
-            0.25,
+            0.15,
             0.0,
             0.0
           ]
@@ -410,7 +410,7 @@
           "robot_link": "left_knee_link",
           "offset": [
             0.0,
-            0.0,
+            -0.05,
             0.0
           ]
         },
@@ -418,7 +418,7 @@
           "robot_link": "right_knee_link",
           "offset": [
             0.0,
-            0.0,
+            0.05,
             0.0
           ]
         },
@@ -427,7 +427,7 @@
           "offset": [
             0.0,
             0.0,
-            0.03
+            0.01
           ]
         },
         "RightFoot": {
@@ -435,27 +435,35 @@
           "offset": [
             0.0,
             0.0,
-            0.03
+            0.01
           ]
         },
         "LeftToeBase": {
           "robot_link": "left_ankle_link",
           "offset": [
-            0.15,
+            0.2,
             0.0,
-            0.0
+            -0.05
           ]
         },
         "RightToeBase": {
           "robot_link": "right_ankle_link",
           "offset": [
-            0.15,
+            0.2,
+            0.0,
+            -0.05
+          ]
+        },
+        "LeftArm": {
+          "robot_link": "left_shoulder_pitch_link",
+          "offset": [
+            0.0,
             0.0,
             0.0
           ]
         },
-        "LeftArm": {
-          "robot_link": "left_shoulder_roll_link",
+        "RightArm": {
+          "robot_link": "right_shoulder_pitch_link",
           "offset": [
             0.0,
             0.0,
@@ -470,26 +478,18 @@
             0.0
           ]
         },
-        "LeftHand": {
-          "robot_link": "left_elbow_link",
-          "offset": [
-            0.2,
-            0.0,
-            0.0
-          ]
-        },
-        "RightArm": {
-          "robot_link": "right_shoulder_roll_link",
-          "offset": [
-            0.0,
-            0.0,
-            0.0
-          ]
-        },
         "RightForeArm": {
           "robot_link": "right_elbow_link",
           "offset": [
             0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "LeftHand": {
+          "robot_link": "left_elbow_link",
+          "offset": [
+            0.2,
             0.0,
             0.0
           ]
@@ -515,7 +515,7 @@
         "pelvis": "Hips",
         "left_hip": "LeftUpLeg",
         "right_hip": "RightUpLeg",
-        "spine": "Spine1"
+        "spine": "Spine"
       },
       "default_pose_on_robot": "T-Pose"
     }

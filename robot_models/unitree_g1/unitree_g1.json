@@ -373,7 +373,7 @@
         "LeftToe": {
           "robot_link": "left_ankle_roll_link",
           "offset": [
-            0.06,
+            0.12,
             0.0,
             0.0
           ]
@@ -381,7 +381,7 @@
         "RightToe": {
           "robot_link": "right_ankle_roll_link",
           "offset": [
-            0.06,
+            0.12,
             0.0,
             0.0
           ]
@@ -458,7 +458,7 @@
         "LeftToeBase": {
           "robot_link": "left_ankle_roll_link",
           "offset": [
-            0.0,
+            0.15,
             0.0,
             0.0
           ]
@@ -466,7 +466,7 @@
         "RightToeBase": {
           "robot_link": "right_ankle_roll_link",
           "offset": [
-            0.0,
+            0.15,
             0.0,
             0.0
           ]
