@@ -2,18 +2,33 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
 from typing import Any, Dict
+
+_PYTHON_PKG_PREFIX = "package://"
 
 
 def _resolve_path(value: str | None, config_dir: Path) -> str | None:
     if not value:
         return value
-    path = Path(value)
-    if not path.is_absolute():
-        path = (config_dir / path).resolve()
-    return str(path)
+    if value.startswith(_PYTHON_PKG_PREFIX):
+        rest = value[len(_PYTHON_PKG_PREFIX):]
+        package_name, _, subpath = rest.partition("/")
+        mod = importlib.import_module(package_name)
+        if mod.__file__ is None:
+            raise ValueError(f"Package '{package_name}' has no __file__; cannot resolve path.")
+        resolved = (Path(mod.__file__).parent / subpath).resolve()
+    else:
+        path = Path(value)
+        if not path.is_absolute():
+            path = (config_dir / path).resolve()
+        resolved = path
+
+    if not resolved.exists():
+        raise FileNotFoundError(f"URDF file not found at resolved path: {resolved}")
+    return str(resolved)
 
 
 def _ensure_dict(value: Any, name: str) -> dict[str, Any]:
@@ -90,9 +105,6 @@ def load_robot_config(config_path: str | Path) -> Dict[str, Any]:
     if robot_height is not None:
         config["robot_height"] = robot_height
 
-    if "link_offset_config" in robot or "link_offset_config" in config:
-        config["link_offset_config"] = robot.get("link_offset_config", config.get("link_offset_config"))
-
     target_mapping = selected_source.get("target_mapping", config.get("joint_mapping"))
     if not isinstance(target_mapping, dict) or not target_mapping:
         raise ValueError("Robot config must contain non-empty 'joint_mapping' or selected source 'target_mapping'.")
@@ -106,6 +118,8 @@ def load_robot_config(config_path: str | Path) -> Dict[str, Any]:
     for key in ("height_estimation", "base_orientation"):
         if key in selected_source:
             config[key] = selected_source[key]
+        elif key in config:
+            pass  # already present at top level from the raw JSON
 
     source_options = selected_source.get("adapter_options")
     if source_options is not None and not isinstance(source_options, dict):

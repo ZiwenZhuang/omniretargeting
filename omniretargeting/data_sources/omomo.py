@@ -12,6 +12,7 @@ from scipy.spatial.transform import Rotation
 
 from .base import DataSource, MotionData
 from .smplx import DEFAULT_SMPLX_TARGET_NAMES, _SMPLX_ROOT_OFFSET
+from omniretargeting.utils import estimate_body_height
 
 
 @dataclass
@@ -165,17 +166,17 @@ class OmomoDataSource(DataSource):
         )
         return output.joints.detach().cpu().numpy()[:, :22, :].astype(np.float32)
 
-    def _estimate_height_from_positions(self, positions: np.ndarray) -> float | None:
-        if positions is None or len(positions) == 0 or positions.shape[1] < 16:
-            return None
+    def _estimate_height_from_positions(self, positions: np.ndarray, target_names: list[str]) -> float | None:
+        """Estimate human height using shared utility.
 
-        head_idx = 15
-        foot_indices = [10, 11]
-        head_top_offset = 0.12
-        head_z = positions[:, head_idx, 2]
-        feet_z = np.min(positions[:, foot_indices, 2], axis=1)
-        estimated_height = float(np.max(head_z - feet_z) + head_top_offset)
-        return float(np.clip(estimated_height, 1.4, 2.2))
+        Args:
+            positions: Joint positions array of shape ``(T, J, 3)``.
+            target_names: List of joint names corresponding to the J axis.
+
+        Returns:
+            Estimated height in meters, or ``None`` if estimation fails.
+        """
+        return estimate_body_height(positions, target_names, head_joint="Head", foot_joints=("L_Foot", "R_Foot"))
 
     def load(self) -> MotionData:
         if self._motion_data is None:
@@ -198,7 +199,7 @@ class OmomoDataSource(DataSource):
                 root_orientations=root_orient if self.use_smplx_base_pose else None,
                 root_translations=positions[:, 0, :] if self.use_smplx_base_pose else None,
                 framerate=self.framerate,
-                source_height=self._estimate_height_from_positions(positions),
+                source_height=self._estimate_height_from_positions(positions, target_names),
                 object_points=object_points,
                 object_mesh=self.object_mesh,
                 metadata={

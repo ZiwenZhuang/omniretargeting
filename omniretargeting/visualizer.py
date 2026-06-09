@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 import trimesh
+from omniretargeting.utils import load_robot_urdf_with_floating_base
 from scipy.spatial.transform import Rotation
 
 
@@ -18,6 +19,10 @@ SOURCE_RGBA = np.array([0.1, 0.9, 0.1, 0.9], dtype=float)
 IDENTITY_MAT = np.eye(3, dtype=float).reshape(-1)
 IDENTITY_SIZE = np.array([1.0, 1.0, 1.0], dtype=float)
 SOURCE_SPHERE_SIZE = np.array([0.02, 0.0, 0.0], dtype=float)
+TARGET_RGBA = np.array([0.9, 0.2, 0.2, 0.95], dtype=float)
+LINK_RGBA = np.array([0.2, 0.4, 0.9, 0.95], dtype=float)
+TARGET_SPHERE_SIZE = np.array([0.025, 0.0, 0.0], dtype=float)
+LINK_SPHERE_SIZE = np.array([0.02, 0.0, 0.0], dtype=float)
 
 
 @dataclass
@@ -73,6 +78,38 @@ def create_flat_terrain(size: float = 10.0) -> trimesh.Trimesh:
     return mesh
 
 
+def _ensure_mujoco_compiler_settings(xml_str: str) -> str:
+    """Ensure ``<mujoco><compiler>`` settings are present in a URDF XML string.
+
+    Injects/updates the ``<mujoco><compiler>`` element so that MuJoCo
+    preserves visual geometry (``discardvisuals="false"``) and resolves
+    mesh paths relative to the URDF directory (``meshdir="./"``).
+
+    Some URDF files use the wrong attribute name ``discardvisual``
+    (singular), which MuJoCo silently ignores, defaulting to
+    ``discardvisuals="true"`` and discarding all visual meshes.
+    This function corrects that before compilation.
+
+    If a ``<mujoco>`` or ``<compiler>`` element already exists, its other
+    children/attributes are preserved; only the two target attributes are
+    set on ``<compiler>``.
+    """
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring(xml_str)
+    mujoco = root.find("mujoco")
+    if mujoco is None:
+        mujoco = ET.SubElement(root, "mujoco")
+        print("Added missing <mujoco> element to URDF XML for visualization.")
+    compiler = mujoco.find("compiler")
+    if compiler is None:
+        compiler = ET.SubElement(mujoco, "compiler")
+        print("Added missing <compiler> element to URDF XML for visualization.")
+    compiler.set("discardvisual", "false")
+    compiler.set("meshdir", "./")
+    return ET.tostring(root, encoding="unicode")
+
+
 @contextlib.contextmanager
 def temporary_visualization_scene(
     urdf_path,
@@ -89,9 +126,29 @@ def temporary_visualization_scene(
 
     temp_dir = tempfile.mkdtemp()
     try:
-        base_model = mujoco.MjModel.from_xml_path(str(urdf_path))
-        base_xml_path = os.path.join(temp_dir, "robot.xml")
-        mujoco.mj_saveLastXML(base_xml_path, base_model)
+        # Load the URDF with floating base injected, then save as MJCF XML.
+        # mj_saveLastXML only works correctly when the model was compiled from
+        # a file path (not from_xml_string), so we write a temp URDF adjacent
+        # to the original for correct mesh path resolution.
+        urdf_path_obj = Path(urdf_path)
+        xml_str = urdf_path_obj.read_text(encoding="utf-8")
+        from omniretargeting.utils import _has_floating_joint, _inject_floating_joint
+        if not _has_floating_joint(xml_str):
+            xml_str = _inject_floating_joint(xml_str)
+        xml_str = _ensure_mujoco_compiler_settings(xml_str)
+        tmp_urdf = urdf_path_obj.parent / f"._omnire_vis_{os.getpid()}.urdf"
+        tmp_urdf.write_text(xml_str)
+        print(f"write to tmp_urdf: {tmp_urdf}")
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(urdf_path_obj.parent))
+            base_model = mujoco.MjModel.from_xml_path(str(tmp_urdf))
+            base_xml_path = os.path.join(temp_dir, "robot.xml")
+            mujoco.mj_saveLastXML(base_xml_path, base_model)
+        finally:
+            os.chdir(old_cwd)
+            if tmp_urdf.exists():
+                tmp_urdf.unlink()
 
         tree = ET.parse(base_xml_path)
         root = tree.getroot()
@@ -174,6 +231,8 @@ def save_trajectory_video(
     source_trajectory=None,
     terrain_mesh=None,
     object_tracks: list[ObjectTrack] | None = None,
+    source_target_names: list[str] | None = None,
+    target_mapping: dict | None = None,
     fps: float = 30,
     width: int = 640,
     height: int = 480,
@@ -215,6 +274,14 @@ def save_trajectory_video(
             camera.elevation = -20.0
             base_body_id = _primary_body_id(model, mujoco)
 
+            # ---- target / link debug sphere metadata ----
+            _target_count = 0
+            _source_name_to_idx = {}
+            if scene is not None and source_target_names is not None and target_mapping is not None and source_trajectory is not None:
+                for i, name in enumerate(source_target_names):
+                    _source_name_to_idx[name] = i
+                _target_count = len(target_mapping)
+
             with imageio.get_writer(output_path, fps=int(fps), codec="libx264", quality=8, macro_block_size=1) as writer:
                 robot_qpos_dim = trajectory.shape[1]
                 for frame_idx, qpos in enumerate(trajectory):
@@ -222,7 +289,49 @@ def save_trajectory_video(
                     _set_object_body_poses(model, data, scene_file.object_body_names, object_tracks, frame_idx, mujoco)
                     mujoco.mj_forward(model, data)
                     camera.lookat[:] = data.xpos[base_body_id]
+
                     renderer.update_scene(data, camera=camera)
+
+                    # Target/link debug spheres — initialized fresh after update_scene,
+                    # which clears the scene and resets ngeom. By creating them at the
+                    # current scene.ngeom they always sit after the model's geoms.
+                    if scene is not None and _target_count > 0 and target_mapping is not None:
+                        import mujoco as _mj
+                        target_base = scene.ngeom
+                        for idx in range(_target_count):
+                            _mj.mjv_initGeom(
+                                scene.geoms[target_base + idx],
+                                type=_mj.mjtGeom.mjGEOM_SPHERE, size=TARGET_SPHERE_SIZE,
+                                pos=np.zeros(3), mat=IDENTITY_MAT, rgba=TARGET_RGBA,
+                            )
+                        scene.ngeom = target_base + _target_count
+                        link_base = scene.ngeom
+                        for idx in range(_target_count):
+                            _mj.mjv_initGeom(
+                                scene.geoms[link_base + idx],
+                                type=_mj.mjtGeom.mjGEOM_SPHERE, size=LINK_SPHERE_SIZE,
+                                pos=np.zeros(3), mat=IDENTITY_MAT, rgba=LINK_RGBA,
+                            )
+                        scene.ngeom = link_base + _target_count
+
+                        src_frame = source_trajectory[min(frame_idx, len(source_trajectory)-1)]
+                        for ti, (src_name, link_spec) in enumerate(target_mapping.items()):
+                            si = _source_name_to_idx.get(src_name)
+                            if si is not None and si < src_frame.shape[0]:
+                                scene.geoms[target_base + ti].pos = src_frame[si]
+                            if isinstance(link_spec, dict):
+                                body_name = link_spec.get("robot_link", link_spec.get("link", ""))
+                                offset = np.asarray(link_spec.get("offset", [0.0, 0.0, 0.0]), dtype=float)
+                            else:
+                                body_name = str(link_spec)
+                                offset = np.zeros(3, dtype=float)
+                            body_id = _mj.mj_name2id(model, _mj.mjtObj.mjOBJ_BODY, body_name)
+                            if body_id >= 0:
+                                pos = data.xpos[body_id].copy()
+                                if np.any(offset != 0):
+                                    R = data.xmat[body_id].reshape(3, 3)
+                                    pos = pos + R @ offset
+                                scene.geoms[link_base + ti].pos = pos
                     writer.append_data(renderer.render())
                     if (frame_idx + 1) % 100 == 0:
                         print(f"  {frame_idx + 1}/{len(trajectory)}")
@@ -246,6 +355,8 @@ def visualize_trajectory(
     source_trajectory=None,
     terrain_mesh=None,
     object_tracks: list[ObjectTrack] | None = None,
+    source_target_names: list[str] | None = None,
+    target_mapping: dict | None = None,
     fps: float = 30.0,
 ):
     try:
@@ -292,6 +403,42 @@ def visualize_trajectory(
                     )
                 scene.ngeom = source_base + source_count
 
+            # ---- target / link debug spheres ----
+            target_base = None
+            link_base = None
+            target_count = 0
+            source_name_to_idx = {}
+            if scene is not None and source_target_names is not None and target_mapping is not None and source_trajectory is not None:
+                for i, name in enumerate(source_target_names):
+                    source_name_to_idx[name] = i
+                target_count = len(target_mapping)
+                # target spheres (red): at source joint positions for mapped targets
+                target_base = scene.ngeom
+                for idx in range(target_count):
+                    geom = scene.geoms[target_base + idx]
+                    mujoco.mjv_initGeom(
+                        geom,
+                        type=mujoco.mjtGeom.mjGEOM_SPHERE,
+                        size=TARGET_SPHERE_SIZE,
+                        pos=np.zeros(3),
+                        mat=IDENTITY_MAT,
+                        rgba=TARGET_RGBA,
+                    )
+                scene.ngeom = target_base + target_count
+                # link spheres (blue): at robot link positions
+                link_base = scene.ngeom
+                for idx in range(target_count):
+                    geom = scene.geoms[link_base + idx]
+                    mujoco.mjv_initGeom(
+                        geom,
+                        type=mujoco.mjtGeom.mjGEOM_SPHERE,
+                        size=LINK_SPHERE_SIZE,
+                        pos=np.zeros(3),
+                        mat=IDENTITY_MAT,
+                        rgba=LINK_RGBA,
+                    )
+                scene.ngeom = link_base + target_count
+
             object_geom_indices = []
 
             frame_idx = 0
@@ -311,6 +458,29 @@ def visualize_trajectory(
                     source_points = source_trajectory[source_frame_idx]
                     for idx in range(source_count):
                         scene.geoms[source_base + idx].pos = source_points[idx]
+
+                # Update target/link debug spheres
+                if scene is not None and target_base is not None and target_mapping is not None:
+                    import mujoco as _mj
+                    for ti, (src_name, link_spec) in enumerate(target_mapping.items()):
+                        # Target (red): source joint position
+                        si = source_name_to_idx.get(src_name)
+                        if si is not None and si < source_count:
+                            scene.geoms[target_base + ti].pos = source_points[si]
+                        # Link (blue): robot body world position + offset
+                        if isinstance(link_spec, dict):
+                            body_name = link_spec.get("robot_link", link_spec.get("link", ""))
+                            offset = np.asarray(link_spec.get("offset", [0.0, 0.0, 0.0]), dtype=float)
+                        else:
+                            body_name = str(link_spec)
+                            offset = np.zeros(3, dtype=float)
+                        body_id = _mj.mj_name2id(model, _mj.mjtObj.mjOBJ_BODY, body_name)
+                        if body_id >= 0:
+                            pos = data.xpos[body_id].copy()
+                            if np.any(offset != 0):
+                                R = data.xmat[body_id].reshape(3, 3)
+                                pos = pos + R @ offset
+                            scene.geoms[link_base + ti].pos = pos
 
                 frame_idx = (frame_idx + 1) % len(trajectory)
                 if source_trajectory is not None:

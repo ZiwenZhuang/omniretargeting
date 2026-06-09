@@ -1,8 +1,8 @@
 # OmniRetargeting Progress
 
-Last Updated: 2026-05-18
+Last Updated: 2026-06-08
 
-## Current Status: HOI/Object Interaction Integration In Progress 🔄
+## Current Status: link_offset_config merged into target_mapping + Nokov BVH adapter ✅
 
 The source-agnostic adapter architecture remains in place, and this branch now extends it toward
 human-object interaction support with OMOMO object sampling, object-aware visualization, and dual-mode
@@ -35,6 +35,28 @@ CLI loading (new YAML configs plus deprecated legacy CLI compatibility).
 - `--source-config` YAML loading is supported for new source-driven workflows
 - Legacy CLI arguments (`--motion`, `--model-dir`, `--source`, `--source-options`) still work
 - Deprecated legacy flags now coexist with YAML mode instead of breaking existing tests
+
+## Recent Changes (2026-06-08)
+
+### link_offset_config → inline offsets in target_mapping ✅
+- Removed separate `link_offset_config` parameter from `OmniRetargeter` → `GenericInteractionRetargeter` data path
+- Offsets now embedded directly in `target_mapping` entries as `{"robot_link": "...", "offset": [dx, dy, dz]}`
+- Eliminates ~500 lines of zero-only boilerplate across all 4 robot JSONs
+- Affected files: `core.py`, `main.py`, `retargeting.py`, `robot_config.py`, `bvh_visualize.py`, `smplx_visualize.py`, `utils.py`, all robot JSONs, `test_basic.py`
+- Both string-form and dict-form `target_mapping` values are accepted throughout the codebase
+
+### Nokov BVH Data Source ✅
+- New `omniretargeting/data_sources/nokov.py` — Nokov motion-capture BVH adapter
+- New `tests/data_sources/test_nokov.py` — 16 tests all passing
+- Test fixture: `tests/resources/nokov/diveroll4_nokov.bvh` (449 KB)
+- Nokov source entry added to `unitree_g1.json` with `target_mapping` and `base_orientation`
+- Reuses `_quat_fk`, `_euler_to_quat` from LAFAN1 module; uses shared `estimate_body_height()`
+- Validated on marsbrain with 752-frame diveroll4 motion to Unitree G1
+
+### Shared utility: `estimate_body_height` ✅
+- Extracted from `SmplxDataSource` into `omniretargeting/utils.py`
+- Now used by: SMPL-X, OMOMO, LAFAN1, Nokov adapters
+- New `resolve_robot_height()` wrapper in utils.py
 
 ## Recent Changes (2026-05-18)
 

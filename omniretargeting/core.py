@@ -17,7 +17,7 @@ from matplotlib.animation import FuncAnimation
 from mpl_toolkits.mplot3d import Axes3D
 
 from .data_sources.base import DataSource, MotionData, MotionFrame
-from .utils import compute_mesh_height_at_point, detect_robot_height
+from .utils import compute_mesh_height_at_point, detect_robot_height, load_robot_urdf_with_floating_base
 
 
 @dataclass
@@ -48,7 +48,6 @@ class OmniRetargeter:
         source_target_names: Optional[List[str]] = None,
         base_orientation: Optional[Dict[str, str]] = None,
         retargeting: Optional[Dict[str, Any]] = None,
-        link_offset_config: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize the OmniRetargeter.
@@ -62,7 +61,6 @@ class OmniRetargeter:
 
             base_orientation: Optional source target names used for base orientation estimation
             retargeting: Optional solver/retargeting settings forwarded to interaction retargeter
-            link_offset_config: Optional per-link offset dictionary forwarded to GenericInteractionRetargeter.
         """
         self.robot_urdf_path = Path(robot_urdf_path)
         self.terrain_mesh_path = Path(terrain_mesh_path)
@@ -76,7 +74,6 @@ class OmniRetargeter:
 
         self.base_orientation_config = dict(base_orientation or {})
         self.retargeting_config = dict(retargeting or {})
-        self.link_offset_config = link_offset_config
 
         # Create mapping from source target names to indices.
         self.source_target_indices = {}
@@ -96,7 +93,7 @@ class OmniRetargeter:
             else:
                 raise ValueError(
                     f"Source target '{source_target_name}' not found in source target names. "
-                    f"Available targets: {list(self.source_target_indices.keys())[:10]}..."
+                    f"Available targets: {list(self.source_target_indices.keys())}"
                 )
 
         if len(self.mapped_source_target_indices) == 0:
@@ -109,7 +106,7 @@ class OmniRetargeter:
 
         # Load robot URDF
         self.robot_urdf = yourdfpy.URDF.load(str(robot_urdf_path), load_meshes=True)
-        self.robot_model = mujoco.MjModel.from_xml_path(str(robot_urdf_path))
+        self.robot_model = load_robot_urdf_with_floating_base(str(robot_urdf_path))
         self.robot_data = mujoco.MjData(self.robot_model)
 
         # Load terrain mesh
@@ -293,7 +290,6 @@ class OmniRetargeter:
             source_target_names=self.valid_source_target_names,
             replace_cylinders_with_capsules=bool(self.retargeting_config.get("replace_cylinders_with_capsules", False)),
             hard_penetration_constraint=self.retargeting_config.get("penetration_resolver", "hard_constraint") == "hard_constraint",
-            link_offset_config=self.link_offset_config,
             joint_regularization_boost=self.retargeting_config.get("joint_regularization_boost"),
         )
 

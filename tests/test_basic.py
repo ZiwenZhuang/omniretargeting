@@ -131,7 +131,6 @@ def _build_retargeter_kwargs(robot_config: dict, terrain_mesh_path: Path | str, 
         "source_target_names": robot_config.get("source_target_names"),
         "base_orientation": robot_config.get("base_orientation"),
         "retargeting": robot_config.get("retargeting"),
-        "link_offset_config": robot_config.get("link_offset_config"),
     }
 
 def _print_and_skip(reason: str) -> None:
@@ -669,7 +668,6 @@ def test_create_stream_state_passes_hard_penetration_constraint():
         "replace_cylinders_with_capsules": True,
         "penetration_resolver": "xyz_nudge",
     }
-    retargeter.link_offset_config = None
     retargeter.valid_source_target_names = ["Pelvis"]
     retargeter.base_orientation_config = {}
 
@@ -690,7 +688,7 @@ def test_create_stream_state_passes_hard_penetration_constraint():
         source_target_names=["Pelvis"],
         replace_cylinders_with_capsules=True,
         hard_penetration_constraint=False,
-        link_offset_config=None,
+        joint_regularization_boost=None,
     )
 
 @pytest.mark.parametrize(("robot_name", "profile_path"), ROBOT_PROFILE_CASES)
@@ -881,7 +879,8 @@ def test_robot_profile_has_floating_base(robot_name: str, profile_path: Path):
     import mujoco
 
     robot_config = _load_robot_profile(profile_path)
-    model = mujoco.MjModel.from_xml_path(str(robot_config["urdf_path"]))
+    from omniretargeting.utils import load_robot_urdf_with_floating_base
+    model = load_robot_urdf_with_floating_base(str(robot_config["urdf_path"]))
 
     assert model.njnt > 0
     joint_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, 0)

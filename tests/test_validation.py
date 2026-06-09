@@ -151,7 +151,7 @@ class TestValidationIntegration:
         if not urdf_path or not Path(urdf_path).exists():
             pytest.skip(f"G1 URDF not found at {urdf_path}")
         
-        robot_model = mujoco.MjModel.from_xml_path(urdf_path)
+        from omniretargeting.utils import load_robot_urdf_with_floating_base; robot_model = load_robot_urdf_with_floating_base(urdf_path)
         
         # Should pass without errors
         missing = validate_robot_joint_mapping(robot_model, joint_mapping, raise_on_missing=False)
@@ -176,7 +176,7 @@ class TestValidationIntegration:
         if not urdf_path or not Path(urdf_path).exists():
             pytest.skip(f"H1 URDF not found at {urdf_path}")
         
-        robot_model = mujoco.MjModel.from_xml_path(urdf_path)
+        from omniretargeting.utils import load_robot_urdf_with_floating_base; robot_model = load_robot_urdf_with_floating_base(urdf_path)
         
         # Should pass without errors
         missing = validate_robot_joint_mapping(robot_model, joint_mapping, raise_on_missing=False)

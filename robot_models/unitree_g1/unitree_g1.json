@@ -6,20 +6,118 @@
       "name": "smplx",
       "type": "smplx",
       "target_mapping": {
-        "Pelvis": "pelvis",
-        "L_Hip": "left_hip_roll_link",
-        "R_Hip": "right_hip_roll_link",
-        "Spine2": "waist_roll_link",
-        "L_Knee": "left_knee_link",
-        "R_Knee": "right_knee_link",
-        "L_Ankle": "left_ankle_roll_link",
-        "R_Ankle": "right_ankle_roll_link",
-        "L_Shoulder": "left_shoulder_roll_link",
-        "R_Shoulder": "right_shoulder_roll_link",
-        "L_Elbow": "left_elbow_link",
-        "R_Elbow": "right_elbow_link",
-        "L_Wrist": "left_wrist_yaw_link",
-        "R_Wrist": "right_wrist_yaw_link"
+        "Pelvis": {
+          "robot_link": "pelvis",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "L_Hip": {
+          "robot_link": "left_hip_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "R_Hip": {
+          "robot_link": "right_hip_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "Spine2": {
+          "robot_link": "waist_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "L_Knee": {
+          "robot_link": "left_knee_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "R_Knee": {
+          "robot_link": "right_knee_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "L_Ankle": {
+          "robot_link": "left_ankle_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.05
+          ]
+        },
+        "R_Ankle": {
+          "robot_link": "right_ankle_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.05
+          ]
+        },
+        "L_Shoulder": {
+          "robot_link": "left_shoulder_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "R_Shoulder": {
+          "robot_link": "right_shoulder_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "L_Elbow": {
+          "robot_link": "left_elbow_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "R_Elbow": {
+          "robot_link": "right_elbow_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "L_Wrist": {
+          "robot_link": "left_wrist_yaw_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "R_Wrist": {
+          "robot_link": "right_wrist_yaw_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
       },
       "adapter_options": {
         "betas": [
@@ -36,192 +134,258 @@
         ],
         "use_smplx_base_pose": true
       },
-      "default_pose_on_robot": "T-Pose",
-      "link_offset_config": {
-        "pelvis": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "left_hip_roll_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "right_hip_roll_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "waist_roll_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "left_knee_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "right_knee_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "left_ankle_roll_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "right_ankle_roll_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "left_shoulder_roll_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "right_shoulder_roll_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "left_elbow_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "right_elbow_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "left_wrist_yaw_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "right_wrist_yaw_link": [
-          0.0,
-          0.0,
-          0.0
-        ]
-      }
+      "default_pose_on_robot": "T-Pose"
     },
     {
       "name": "omomo",
       "type": "omomo",
       "target_mapping": {
-        "Pelvis": "pelvis",
-        "L_Hip": "left_hip_roll_link",
-        "R_Hip": "right_hip_roll_link",
-        "Spine2": "waist_roll_link",
-        "L_Knee": "left_knee_link",
-        "R_Knee": "right_knee_link",
-        "L_Ankle": "left_ankle_roll_link",
-        "R_Ankle": "right_ankle_roll_link",
-        "L_Shoulder": "left_shoulder_roll_link",
-        "R_Shoulder": "right_shoulder_roll_link",
-        "L_Elbow": "left_elbow_link",
-        "R_Elbow": "right_elbow_link",
-        "L_Wrist": "left_wrist_yaw_link",
-        "R_Wrist": "right_wrist_yaw_link"
-      },
-      "link_offset_config": {
-        "pelvis": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "left_hip_roll_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "right_hip_roll_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "waist_roll_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "left_knee_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "right_knee_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "left_ankle_roll_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "right_ankle_roll_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "left_shoulder_roll_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "right_shoulder_roll_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "left_elbow_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "right_elbow_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "left_wrist_yaw_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "right_wrist_yaw_link": [
-          0.0,
-          0.0,
-          0.0
-        ]
+        "Pelvis": {
+          "robot_link": "pelvis",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "L_Hip": {
+          "robot_link": "left_hip_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "R_Hip": {
+          "robot_link": "right_hip_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "Spine2": {
+          "robot_link": "waist_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "L_Knee": {
+          "robot_link": "left_knee_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "R_Knee": {
+          "robot_link": "right_knee_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "L_Ankle": {
+          "robot_link": "left_ankle_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.05
+          ]
+        },
+        "R_Ankle": {
+          "robot_link": "right_ankle_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.05
+          ]
+        },
+        "L_Shoulder": {
+          "robot_link": "left_shoulder_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "R_Shoulder": {
+          "robot_link": "right_shoulder_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "L_Elbow": {
+          "robot_link": "left_elbow_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "R_Elbow": {
+          "robot_link": "right_elbow_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "L_Wrist": {
+          "robot_link": "left_wrist_yaw_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "R_Wrist": {
+          "robot_link": "right_wrist_yaw_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
       }
     },
     {
       "name": "lafan1",
       "type": "lafan1",
       "target_mapping": {
-        "Hips": "pelvis",
-        "LeftUpLeg": "left_hip_roll_link",
-        "RightUpLeg": "right_hip_roll_link",
-        "LeftLeg": "left_knee_link",
-        "RightLeg": "right_knee_link",
-        "LeftFoot": "left_ankle_roll_link",
-        "RightFoot": "right_ankle_roll_link",
-        "LeftArm": "left_shoulder_roll_link",
-        "LeftForeArm": "left_elbow_link",
-        "LeftHand": "left_wrist_yaw_link",
-        "RightArm": "right_shoulder_roll_link",
-        "RightForeArm": "right_elbow_link",
-        "RightHand": "right_wrist_yaw_link",
-        "Spine": "waist_roll_link",
-        "LeftToe": "left_ankle_roll_link",
-        "RightToe": "right_ankle_roll_link"
+        "Hips": {
+          "robot_link": "pelvis",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "LeftUpLeg": {
+          "robot_link": "left_hip_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "RightUpLeg": {
+          "robot_link": "right_hip_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "LeftLeg": {
+          "robot_link": "left_knee_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "RightLeg": {
+          "robot_link": "right_knee_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "LeftFoot": {
+          "robot_link": "left_ankle_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.03
+          ]
+        },
+        "RightFoot": {
+          "robot_link": "right_ankle_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.03
+          ]
+        },
+        "LeftArm": {
+          "robot_link": "left_shoulder_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "LeftForeArm": {
+          "robot_link": "left_elbow_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "LeftHand": {
+          "robot_link": "left_wrist_yaw_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "RightArm": {
+          "robot_link": "right_shoulder_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "RightForeArm": {
+          "robot_link": "right_elbow_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "RightHand": {
+          "robot_link": "right_wrist_yaw_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "Spine": {
+          "robot_link": "waist_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "LeftToe": {
+          "robot_link": "left_ankle_roll_link",
+          "offset": [
+            0.12,
+            0.0,
+            0.0
+          ]
+        },
+        "RightToe": {
+          "robot_link": "right_ankle_roll_link",
+          "offset": [
+            0.12,
+            0.0,
+            0.0
+          ]
+        }
       },
       "base_orientation": {
         "pelvis": "Hips",
@@ -229,87 +393,146 @@
         "right_hip": "RightUpLeg",
         "spine": "Spine1"
       },
-      "link_offset_config": {
-        "pelvis": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "left_hip_roll_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "right_hip_roll_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "waist_roll_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "left_knee_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "right_knee_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "left_ankle_roll_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "right_ankle_roll_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "left_shoulder_roll_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "right_shoulder_roll_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "left_elbow_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "right_elbow_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "left_wrist_yaw_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "right_wrist_yaw_link": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "LeftToe": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "RightToe": [
-          0.0,
-          0.0,
-          0.0
-        ]
+      "default_pose_on_robot": "T-Pose"
+    },
+    {
+      "name": "nokov",
+      "type": "nokov",
+      "target_mapping": {
+        "Hips": {
+          "robot_link": "pelvis",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "LeftUpLeg": {
+          "robot_link": "left_hip_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "RightUpLeg": {
+          "robot_link": "right_hip_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "LeftLeg": {
+          "robot_link": "left_knee_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "RightLeg": {
+          "robot_link": "right_knee_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "LeftFoot": {
+          "robot_link": "left_ankle_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.05
+          ]
+        },
+        "RightFoot": {
+          "robot_link": "right_ankle_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.05
+          ]
+        },
+        "LeftToeBase": {
+          "robot_link": "left_ankle_roll_link",
+          "offset": [
+            0.15,
+            0.0,
+            0.0
+          ]
+        },
+        "RightToeBase": {
+          "robot_link": "right_ankle_roll_link",
+          "offset": [
+            0.15,
+            0.0,
+            0.0
+          ]
+        },
+        "LeftArm": {
+          "robot_link": "left_shoulder_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "LeftForeArm": {
+          "robot_link": "left_elbow_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "LeftHand": {
+          "robot_link": "left_wrist_yaw_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "RightArm": {
+          "robot_link": "right_shoulder_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "RightForeArm": {
+          "robot_link": "right_elbow_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "RightHand": {
+          "robot_link": "right_wrist_yaw_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "Spine": {
+          "robot_link": "waist_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "base_orientation": {
+        "pelvis": "Hips",
+        "left_hip": "LeftUpLeg",
+        "right_hip": "RightUpLeg",
+        "spine": "Spine1"
       },
       "default_pose_on_robot": "T-Pose"
     }
@@ -360,78 +583,6 @@
         "*hip*yaw*": 0.2
       }
     }
-  },
-  "link_offset_config": {
-    "pelvis": [
-      0.0,
-      0.0,
-      0.0
-    ],
-    "left_hip_roll_link": [
-      0.0,
-      0.0,
-      0.0
-    ],
-    "right_hip_roll_link": [
-      0.0,
-      0.0,
-      0.0
-    ],
-    "waist_roll_link": [
-      0.0,
-      0.0,
-      0.0
-    ],
-    "left_knee_link": [
-      0.0,
-      0.0,
-      0.0
-    ],
-    "right_knee_link": [
-      0.0,
-      0.0,
-      0.0
-    ],
-    "left_ankle_roll_link": [
-      0.0,
-      0.0,
-      0.0
-    ],
-    "right_ankle_roll_link": [
-      0.0,
-      0.0,
-      0.0
-    ],
-    "left_shoulder_roll_link": [
-      0.0,
-      0.0,
-      0.0
-    ],
-    "right_shoulder_roll_link": [
-      0.0,
-      0.0,
-      0.0
-    ],
-    "left_elbow_link": [
-      0.0,
-      0.0,
-      0.0
-    ],
-    "right_elbow_link": [
-      0.0,
-      0.0,
-      0.0
-    ],
-    "left_wrist_yaw_link": [
-      0.0,
-      0.0,
-      0.0
-    ],
-    "right_wrist_yaw_link": [
-      0.0,
-      0.0,
-      0.0
-    ]
   },
   "default_joint_positions": {
     "T-Pose": {

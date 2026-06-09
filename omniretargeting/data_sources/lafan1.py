@@ -10,6 +10,7 @@ from scipy.spatial.transform import Rotation
 
 from omniretargeting.data_sources.base import DataSource, MotionData
 from omniretargeting.data_sources.registry import register_data_source
+from omniretargeting.utils import estimate_body_height
 
 
 # ---------------------------------------------------------------------------
@@ -294,34 +295,27 @@ class Lafan1DataSource(DataSource):
         root_translations = transformed_positions[:, 0, :].copy()
 
         # Estimate human height from the first frame
+        # LAFAN1 uses multiple naming conventions across subjects; try known candidates.
         head_name_candidates = ["Head", "head", "Neck", "Neck1"]
-        foot_name_candidates = [
-            ["LeftFoot", "RightFoot"],
-            ["LeftToe", "RightToe"],
-            ["LeftFootMod", "RightFootMod"],
+        foot_name_candidates: list[tuple[str, str]] = [
+            ("LeftFoot", "RightFoot"),
+            ("LeftToe", "RightToe"),
+            ("LeftFootMod", "RightFootMod"),
         ]
-        head_idx = None
-        for hn in head_name_candidates:
-            try:
-                head_idx = names.index(hn)
-                break
-            except ValueError:
-                continue
 
-        foot_indices = None
-        for pair in foot_name_candidates:
-            try:
-                foot_indices = [names.index(pair[0]), names.index(pair[1])]
-                break
-            except ValueError:
-                continue
+        head_joint_name = next((hn for hn in head_name_candidates if hn in names), None)
+        foot_joint_names = next(
+            (pair for pair in foot_name_candidates if pair[0] in names and pair[1] in names),
+            None,
+        )
 
         source_height = 1.75  # default fallback
-        if head_idx is not None and foot_indices is not None:
-            head_z = transformed_positions[0, head_idx, 2]
-            feet_z = min(transformed_positions[0, foot_indices[0], 2],
-                         transformed_positions[0, foot_indices[1], 2])
-            source_height = float(np.clip(head_z - feet_z + 0.12, 1.4, 2.2))
+        if head_joint_name is not None and foot_joint_names is not None:
+            source_height = estimate_body_height(
+                transformed_positions, names,
+                head_joint=head_joint_name,
+                foot_joints=foot_joint_names,
+            )
 
         framerate = 1.0 / frametime if frametime > 0 else 30.0
 
