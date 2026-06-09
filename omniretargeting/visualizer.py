@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 import trimesh
+from omniretargeting.utils import load_robot_urdf_with_floating_base
 from scipy.spatial.transform import Rotation
 
 
@@ -89,9 +90,27 @@ def temporary_visualization_scene(
 
     temp_dir = tempfile.mkdtemp()
     try:
-        base_model = mujoco.MjModel.from_xml_path(str(urdf_path))
-        base_xml_path = os.path.join(temp_dir, "robot.xml")
-        mujoco.mj_saveLastXML(base_xml_path, base_model)
+        # Load the URDF with floating base injected, then save as MJCF XML.
+        # mj_saveLastXML only works correctly when the model was compiled from
+        # a file path (not from_xml_string), so we write a temp URDF adjacent
+        # to the original for correct mesh path resolution.
+        urdf_path_obj = Path(urdf_path)
+        xml_str = urdf_path_obj.read_text(encoding="utf-8")
+        from omniretargeting.utils import _has_floating_joint, _inject_floating_joint
+        if not _has_floating_joint(xml_str):
+            xml_str = _inject_floating_joint(xml_str)
+        tmp_urdf = urdf_path_obj.parent / f"._omnire_vis_{os.getpid()}.urdf"
+        tmp_urdf.write_text(xml_str)
+        try:
+            old_cwd = os.getcwd()
+            os.chdir(str(urdf_path_obj.parent))
+            base_model = mujoco.MjModel.from_xml_path(str(tmp_urdf))
+            os.chdir(old_cwd)
+            base_xml_path = os.path.join(temp_dir, "robot.xml")
+            mujoco.mj_saveLastXML(base_xml_path, base_model)
+        finally:
+            if tmp_urdf.exists():
+                tmp_urdf.unlink()
 
         tree = ET.parse(base_xml_path)
         root = tree.getroot()

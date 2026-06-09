@@ -879,7 +879,8 @@ def test_robot_profile_has_floating_base(robot_name: str, profile_path: Path):
     import mujoco
 
     robot_config = _load_robot_profile(profile_path)
-    model = mujoco.MjModel.from_xml_path(str(robot_config["urdf_path"]))
+    from omniretargeting.utils import load_robot_urdf_with_floating_base
+    model = load_robot_urdf_with_floating_base(str(robot_config["urdf_path"]))
 
     assert model.njnt > 0
     joint_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, 0)

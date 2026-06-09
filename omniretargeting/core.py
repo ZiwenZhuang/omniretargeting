@@ -17,7 +17,7 @@ from matplotlib.animation import FuncAnimation
 from mpl_toolkits.mplot3d import Axes3D
 
 from .data_sources.base import DataSource, MotionData, MotionFrame
-from .utils import compute_mesh_height_at_point, detect_robot_height
+from .utils import compute_mesh_height_at_point, detect_robot_height, load_robot_urdf_with_floating_base
 
 
 @dataclass
@@ -106,7 +106,7 @@ class OmniRetargeter:
 
         # Load robot URDF
         self.robot_urdf = yourdfpy.URDF.load(str(robot_urdf_path), load_meshes=True)
-        self.robot_model = mujoco.MjModel.from_xml_path(str(robot_urdf_path))
+        self.robot_model = load_robot_urdf_with_floating_base(str(robot_urdf_path))
         self.robot_data = mujoco.MjData(self.robot_model)
 
         # Load terrain mesh

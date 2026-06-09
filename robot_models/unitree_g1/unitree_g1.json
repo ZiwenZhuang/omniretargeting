@@ -455,6 +455,22 @@
             0.05
           ]
         },
+        "LeftToeBase": {
+          "robot_link": "left_ankle_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "RightToeBase": {
+          "robot_link": "right_ankle_roll_link",
+          "offset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
         "LeftArm": {
           "robot_link": "left_shoulder_roll_link",
           "offset": [

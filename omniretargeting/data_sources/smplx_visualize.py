@@ -12,7 +12,7 @@ import mujoco
 import numpy as np
 
 from omniretargeting.robot_config import load_robot_config
-from omniretargeting.utils import resolve_robot_height
+from omniretargeting.utils import load_robot_urdf_with_floating_base, resolve_robot_height
 
 
 SMPLX_JOINT_NAMES = [
@@ -101,7 +101,7 @@ def _load_robot_default_pose(
     urdf_path: str | Path,
     default_joint_positions: dict[str, float] | None = None,
 ) -> tuple[mujoco.MjModel, mujoco.MjData, dict[str, int], np.ndarray, np.ndarray]:
-    model = mujoco.MjModel.from_xml_path(str(urdf_path))
+    model = load_robot_urdf_with_floating_base(str(urdf_path))
     data = mujoco.MjData(model)
     mujoco.mj_resetData(model, data)
     if model.njnt > 0 and model.jnt_type[0] == mujoco.mjtJoint.mjJNT_FREE and model.nq >= 7:

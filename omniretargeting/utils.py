@@ -465,3 +465,116 @@ def detect_robot_height(model: "mujoco.MjModel", data: "mujoco.MjData") -> float
     if height < 0.3 or height > 3.0:
         return 1.6
     return height
+
+
+import re
+
+
+def _strip_xml_comments(xml_str: str) -> str:
+    """Remove XML comments from a string."""
+    return re.sub(r"<!--.*?-->", "", xml_str, flags=re.DOTALL)
+
+
+def _has_floating_joint(xml_str: str) -> bool:
+    """Return True if the URDF XML already contains a floating joint."""
+    return 'type="floating"' in _strip_xml_comments(xml_str)
+
+
+def _find_urdf_root_body(xml_str: str) -> str:
+    """Find the root body name in a URDF XML string.
+
+    The root body is the link that is never a ``<child>`` of any joint.
+    """
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring(xml_str)
+    links: set[str] = set()
+    children: set[str] = set()
+
+    for link in root.findall("link"):
+        name = link.get("name")
+        if name:
+            links.add(name)
+
+    for joint in root.findall("joint"):
+        child = joint.find("child")
+        if child is not None:
+            child_name = child.get("link")
+            if child_name:
+                children.add(child_name)
+
+    root_candidates = links - children
+    root_candidates.discard("world")
+
+    if not root_candidates:
+        for link in root.findall("link"):
+            name = link.get("name")
+            if name and name != "world":
+                return name
+        raise ValueError("No root body found in URDF — cannot inject floating joint.")
+
+    return sorted(root_candidates)[0]
+
+
+def _inject_floating_joint(xml_str: str) -> str:
+    """Inject a world link and floating joint into a URDF XML string."""
+    import xml.etree.ElementTree as ET
+
+    root_body = _find_urdf_root_body(xml_str)
+    root = ET.fromstring(xml_str)
+
+    has_world = any(
+        link.get("name") == "world" for link in root.findall("link")
+    )
+
+    if not has_world:
+        root.insert(0, ET.Element("link", name="world"))
+
+    floating_joint = ET.Element("joint", name="floating_base", type="floating")
+    ET.SubElement(floating_joint, "parent", link="world")
+    ET.SubElement(floating_joint, "child", link=root_body)
+
+    world_idx = None
+    for i, elem in enumerate(root):
+        if elem.tag == "link" and elem.get("name") == "world":
+            world_idx = i
+            break
+
+    if world_idx is not None:
+        root.insert(world_idx + 1, floating_joint)
+    else:
+        root.insert(0, floating_joint)
+
+    return ET.tostring(root, encoding="unicode")
+
+
+def load_robot_urdf_with_floating_base(urdf_path: str | Path) -> "mujoco.MjModel":
+    """Load a URDF into a MuJoCo model, auto-injecting a floating joint if missing.
+
+    MuJoCo treats a URDF's base link as fixed to the world unless there is a
+    ``<joint type="floating">`` connecting a world reference to the base.
+    This function detects when a floating joint is absent and injects one
+    automatically, so callers always receive a free-floating model.
+
+    Args:
+        urdf_path: Path to the URDF file. Relative mesh paths inside the URDF
+                   are resolved relative to the URDF directory.
+
+    Returns:
+        A MuJoCo ``MjModel`` that is guaranteed to have a floating base joint
+        as the first joint.
+    """
+    import os
+
+    urdf_path = Path(urdf_path)
+    xml_str = urdf_path.read_text(encoding="utf-8")
+
+    if not _has_floating_joint(xml_str):
+        xml_str = _inject_floating_joint(xml_str)
+
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(urdf_path.parent))
+        return mujoco.MjModel.from_xml_string(xml_str)
+    finally:
+        os.chdir(old_cwd)

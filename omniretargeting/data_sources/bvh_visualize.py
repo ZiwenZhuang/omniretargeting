@@ -27,7 +27,7 @@ import numpy as np
 
 from omniretargeting.data_sources.lafan1 import _quat_fk, _ROTATION_MATRIX
 from omniretargeting.robot_config import load_robot_config
-from omniretargeting.utils import resolve_robot_height
+from omniretargeting.utils import load_robot_urdf_with_floating_base, resolve_robot_height
 
 
 def _get_bvh_parser(source_type: str):
@@ -68,7 +68,7 @@ def _apply_default_joint_positions(model, data, default_joint_positions):
 
 
 def _load_robot_pose(urdf_path, default_joint_positions=None):
-    model = mujoco.MjModel.from_xml_path(str(urdf_path))
+    model = load_robot_urdf_with_floating_base(str(urdf_path))
     data = mujoco.MjData(model)
     mujoco.mj_resetData(model, data)
     if model.njnt > 0 and model.jnt_type[0] == mujoco.mjtJoint.mjJNT_FREE and model.nq >= 7:
