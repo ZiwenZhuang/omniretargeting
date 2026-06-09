@@ -405,6 +405,8 @@ def main():
                 source_trajectory=scaled_source_positions,
                 terrain_mesh=vis_terrain,
                 object_tracks=vis_object_meshes,
+                source_target_names=motion_data.target_names,
+                target_mapping=joint_mapping,
                 fps=framerate,
             )
 
@@ -415,6 +417,8 @@ def main():
                 scaled_source_positions,
                 terrain_mesh=vis_terrain,
                 object_tracks=vis_object_meshes,
+                source_target_names=motion_data.target_names,
+                target_mapping=joint_mapping,
                 fps=framerate,
             )
 
