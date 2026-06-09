@@ -832,8 +832,13 @@ class GenericInteractionRetargeter:
                     mujoco.mj_jac(self.robot_model, self.robot_data, Jp, Jr, p_W, int(body_id))
                     T = self._build_transform_qdot_to_qvel_fast()
                     Jr_world = Jr @ T  # rotational Jacobian in world frame (3 x nq)
-                    # Cross-term: skew(o_world) @ Jr_world
-                    J_full = J_base + self._skew(o_world) @ Jr_world
+                    # Cross-term: -skew(o_world) @ Jr_world
+                    # Derivation: d/dt(p_body + R @ o_local)
+                    #   = v_body + ω × o_world
+                    #   = v_body - o_world × ω
+                    #   = v_body - skew(o_world) @ ω
+                    # J_full = J_base - skew(o_world) @ Jr_world
+                    J_full = J_base - self._skew(o_world) @ Jr_world
                 else:
                     J_full = J_base
 
