@@ -366,6 +366,52 @@ Legacy source-loading flags:
 | `--smplx_motion` | deprecated alias | Legacy alias for `--motion`. |
 | `--smplx_model_dir` | deprecated alias | Legacy alias for `--model-dir`. |
 
+### Batch Processing
+
+`batch.py` scans a folder of motion files and retargets every file with the same
+robot profile and terrain. It writes per-motion YAML source configs, logs
+repository status before processing, and runs the first file as a probe job
+before processing the rest.
+
+```bash
+python -m omniretargeting.batch \
+  --source-folder /path/to/motions \
+  --source-type smplx \
+  --robot-config robot_models/unitree_g1/unitree_g1.json \
+  --output-dir /tmp/batch_output \
+  --model-dir /path/to/smplx/models
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--source-folder` | *(required)* | Folder containing motion files to process. |
+| `--source-type` | *(required)* | Source type: `smplx`, `lafan1`, `nokov`, or `omomo`. |
+| `--robot-config` | *(required)* | Path to robot profile JSON. |
+| `--output-dir` | *(required)* | Directory for batch outputs (configs, logs, motions). |
+| `--model-dir` | `None` | Model directory (required for SMPL-X). |
+| `--terrain` | `None` | Path to terrain mesh applied to all motions. |
+| `--max-workers` | auto | Maximum parallel workers (reserved; currently sequential). |
+| `--framerate` | auto | Override framerate for all motions. |
+| `--source-options` | `None` | JSON string of extra source options for all motions. |
+| `--skip-test-job` | off | Skip the initial probe job and process all files directly. |
+| `--timeout` | `3600` | Per-file timeout in seconds. |
+
+Output layout under `--output-dir`:
+
+```
+output-dir/
+├── repo_status.log          # git status snapshot before processing
+├── configs/                 # per-motion YAML source configs
+│   └── <name>_config.yaml
+├── logs/                    # per-motion subprocess stdout/stderr
+│   └── <name>.log
+└── motions/<name>/          # per-motion outputs
+    ├── <name>_retargeted.npz
+    ├── <name>_retargeted.mp4
+    ├── <name>_scaled_terrain.obj
+    └── <name>_scaled_objects/   # when source provides object meshes
+```
+
 ### Robot Profile Config (Per-Humanoid)
 
 Keep one JSON profile per humanoid robot (for example under
