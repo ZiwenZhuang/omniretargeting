@@ -206,19 +206,6 @@ def test_load_height_estimated():
         os.unlink(path)
 
 
-def test_load_grounded():
-    """After grounding, the lowest foot Z should be near zero."""
-    path = _write_temp_bvh(_MINIMAL_NOKOV_BVH)
-    try:
-        ds = NokovDataSource(motion_file=path)
-        md = ds.load()
-        foot_indices = [md.target_names.index(n) for n in ("LeftFoot", "RightFoot")]
-        min_foot_z = float(np.min(md.positions[:, foot_indices, 2]))
-        assert abs(min_foot_z) < 1e-5
-    finally:
-        os.unlink(path)
-
-
 def test_iter_frames():
     path = _write_temp_bvh(_MINIMAL_NOKOV_BVH)
     try:

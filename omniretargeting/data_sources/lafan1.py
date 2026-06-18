@@ -285,13 +285,6 @@ class Lafan1DataSource(DataSource):
 
         # Root orientations are estimated from joint positions by the retargeting pipeline
 
-        # Ground the motion: ensure feet touch Z=0 at lowest point
-        foot_names_for_ground = [n for n in names if n in ("LeftFoot", "RightFoot")]
-        if foot_names_for_ground:
-            foot_indices_ground = [names.index(n) for n in foot_names_for_ground]
-            min_foot_z = float(np.min(transformed_positions[:, foot_indices_ground, 2]))
-            transformed_positions[:, :, 2] -= min_foot_z
-
         root_translations = transformed_positions[:, 0, :].copy()
 
         # Estimate human height from the first frame

@@ -252,13 +252,6 @@ class NokovDataSource(DataSource):
         # Apply coordinate transform and cm → m
         transformed_positions = global_positions @ _ROTATION_MATRIX.T / 100.0
 
-        # Ground the motion: shift so the lowest foot Z = 0
-        foot_names = [n for n in names if n in ("LeftFoot", "RightFoot")]
-        if len(foot_names) == 2:
-            foot_indices = [names.index(n) for n in foot_names]
-            min_foot_z = float(np.min(transformed_positions[:, foot_indices, 2]))
-            transformed_positions[:, :, 2] -= min_foot_z
-
         root_translations = transformed_positions[:, 0, :].copy()
 
         # Estimate human height from the first frame
