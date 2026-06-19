@@ -20,7 +20,9 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import yaml
@@ -46,16 +48,6 @@ def detect_resources() -> dict:
     except ImportError:
         pass
     return {"cpu_count": cpu_count, "memory_gb": memory_gb}
-
-
-def determine_batch_size(resources: dict) -> int:
-    """Choose a conservative worker count from available resources."""
-    cpu_count = resources["cpu_count"]
-    workers = max(1, cpu_count - 1)
-    memory_gb = resources.get("memory_gb")
-    if memory_gb is not None and memory_gb < 4:
-        workers = min(workers, 2)
-    return workers
 
 
 def scan_source_folder(folder: Path, source_type: str) -> list[Path]:
@@ -221,8 +213,47 @@ def _build_command(
     return cmd
 
 
-def run_single_job(cmd: list[str], activation_prefix: str, log_file: Path, timeout: float) -> dict:
-    """Launch one retargeting subprocess and return timing/status."""
+def _poll_peak_memory(pid: int, result_holder: list[float], stop_event: threading.Event) -> None:
+    """Poll VmHWM (high-water mark) of a process tree until it exits or stop_event is set."""
+    peak_mb = 0.0
+    while not stop_event.is_set():
+        try:
+            pids = [pid]
+            try:
+                import psutil
+                parent = psutil.Process(pid)
+                pids = [p.pid for p in parent.children(recursive=True)] + [pid]
+            except (ImportError, psutil.NoSuchProcess):
+                pass
+
+            for p in pids:
+                try:
+                    with open(f"/proc/{p}/status") as f:
+                        for line in f:
+                            if line.startswith("VmHWM:"):
+                                kb = int(line.split()[1])
+                                peak_mb = max(peak_mb, kb / 1024.0)
+                                break
+                except (FileNotFoundError, ProcessLookupError, ValueError):
+                    continue
+        except Exception:
+            break
+        stop_event.wait(1.0)
+    result_holder.append(peak_mb)
+
+
+def run_single_job(
+    cmd: list[str],
+    activation_prefix: str,
+    log_file: Path,
+    timeout: float,
+    measure_memory: bool = False,
+) -> dict:
+    """Launch one retargeting subprocess and return timing/status.
+
+    When *measure_memory* is True, poll the child's VmHWM and return
+    ``peak_memory_mb`` in the result dict.
+    """
     if activation_prefix:
         full_cmd = f"{activation_prefix} && {' '.join(cmd)}"
         shell_cmd: list[str] = ["bash", "-lc", full_cmd]
@@ -231,16 +262,58 @@ def run_single_job(cmd: list[str], activation_prefix: str, log_file: Path, timeo
 
     start = time.time()
     log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    stop_event: threading.Event | None = None
+    mem_thread: threading.Thread | None = None
+    mem_result: list[float] = []
+
     try:
         with open(log_file, "w") as f:
-            proc = subprocess.run(shell_cmd, stdout=f, stderr=subprocess.STDOUT, text=True, timeout=timeout)
+            proc = subprocess.Popen(shell_cmd, stdout=f, stderr=subprocess.STDOUT, text=True)
+
+            if measure_memory:
+                stop_event = threading.Event()
+                mem_thread = threading.Thread(
+                    target=_poll_peak_memory,
+                    args=(proc.pid, mem_result, stop_event),
+                    daemon=True,
+                )
+                mem_thread.start()
+
+            try:
+                proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+                elapsed = time.time() - start
+                if stop_event:
+                    stop_event.set()
+                if mem_thread:
+                    mem_thread.join(timeout=5)
+                with open(log_file, "a") as fa:
+                    fa.write(f"\n\n*** Killed after timeout ({timeout:.0f}s, elapsed {elapsed:.0f}s) ***\n")
+                result: dict = {"returncode": -1, "elapsed": elapsed, "log_file": str(log_file), "timed_out": True}
+                if mem_result:
+                    result["peak_memory_mb"] = mem_result[0]
+                return result
+
         elapsed = time.time() - start
-        return {"returncode": proc.returncode, "elapsed": elapsed, "log_file": str(log_file)}
-    except subprocess.TimeoutExpired:
+        if stop_event:
+            stop_event.set()
+        if mem_thread:
+            mem_thread.join(timeout=5)
+
+        result = {"returncode": proc.returncode, "elapsed": elapsed, "log_file": str(log_file)}
+        if mem_result:
+            result["peak_memory_mb"] = mem_result[0]
+        return result
+    except Exception as exc:
         elapsed = time.time() - start
-        with open(log_file, "a") as f:
-            f.write(f"\n\n*** Killed after timeout ({timeout:.0f}s, elapsed {elapsed:.0f}s) ***\n")
-        return {"returncode": -1, "elapsed": elapsed, "log_file": str(log_file), "timed_out": True}
+        if stop_event:
+            stop_event.set()
+        if mem_thread:
+            mem_thread.join(timeout=5)
+        return {"returncode": -1, "elapsed": elapsed, "log_file": str(log_file), "error": str(exc)}
 
 
 def _run_test_job(
@@ -262,17 +335,67 @@ def _run_test_job(
     log_file = output_dir / "logs" / f"{first.stem}.log"
 
     print(f"  Command: {' '.join(cmd)}")
-    result = run_single_job(cmd, activation_prefix, log_file, timeout)
+    result = run_single_job(cmd, activation_prefix, log_file, timeout, measure_memory=True)
     result["motion_file"] = str(first)
     result["motion_stem"] = first.stem
 
     if result.get("timed_out"):
         print(f"  Test job TIMED OUT ({result['elapsed']:.0f}s > {timeout:.0f}s limit)")
     elif result["returncode"] == 0:
-        print(f"  Test job OK ({result['elapsed']:.1f}s)")
+        peak = result.get("peak_memory_mb", 0)
+        print(f"  Test job OK ({result['elapsed']:.1f}s, peak memory: {peak:.0f} MB)")
     else:
         print(f"  Test job FAILED (rc={result['returncode']}, {result['elapsed']:.1f}s)")
         print(f"  Log: {result['log_file']}")
+    return result
+
+
+def _determine_workers_from_memory(
+    test_peak_mb: float,
+    reserved_memory_ratio: float,
+    max_workers_cap: int | None,
+) -> int:
+    """Compute parallel workers from available memory and test job peak usage."""
+    try:
+        import psutil
+        total_mb = psutil.virtual_memory().total / (1024 * 1024)
+    except ImportError:
+        total_mb = None
+
+    if total_mb is None or test_peak_mb <= 0:
+        return 1
+
+    usable_mb = total_mb * (1.0 - reserved_memory_ratio)
+    workers = max(1, int(usable_mb / test_peak_mb))
+
+    cpu_count = os.cpu_count() or 1
+    workers = min(workers, cpu_count)
+
+    if max_workers_cap is not None:
+        workers = min(workers, max_workers_cap)
+
+    return workers
+
+
+def _run_one_motion(
+    motion_file: Path,
+    source_type: str,
+    robot_config_path: str,
+    output_dir: Path,
+    activation_prefix: str,
+    terrain_path: str | None,
+    extra_options: dict,
+    framerate: float | None,
+    timeout: float,
+) -> dict:
+    """Process a single motion file (called from worker processes)."""
+    motion_stem = motion_file.stem
+    config_path = write_source_config(motion_file, source_type, output_dir, terrain_path, extra_options)
+    cmd = _build_command(config_path, robot_config_path, output_dir, motion_stem, framerate)
+    log_file = output_dir / "logs" / f"{motion_stem}.log"
+    result = run_single_job(cmd, activation_prefix, log_file, timeout)
+    result["motion_file"] = str(motion_file)
+    result["motion_stem"] = motion_stem
     return result
 
 
@@ -284,15 +407,16 @@ def process_batch(
     activation_prefix: str,
     terrain_path: str | None = None,
     extra_options: dict | None = None,
-    _max_workers: int = 1,
+    max_workers: int | None = None,
     framerate: float | None = None,
     skip_test_job: bool = False,
     timeout: float = 3600,
+    reserved_memory_ratio: float = 0.5,
 ) -> list[dict]:
     """Process every motion file, returning per-file results.
 
-    Note: *_max_workers* is reserved for future parallel-execution support.
-    The current implementation processes jobs sequentially for safety.
+    Runs a test job first to measure peak memory, then launches remaining
+    files in parallel with worker count derived from available memory.
     """
     if extra_options is None:
         extra_options = {}
@@ -300,7 +424,7 @@ def process_batch(
     results: list[dict] = []
     remaining = list(motion_files)
 
-    # Run first motion as a probe to validate the pipeline (unless skipped)
+    test_peak_mb = 0.0
     if remaining and not skip_test_job:
         test_result = _run_test_job(
             remaining, source_type, robot_config_path, output_dir,
@@ -310,30 +434,67 @@ def process_batch(
         if test_result["returncode"] != 0:
             print("\nTest job failed. Aborting batch. Check the log above.")
             return results
+        test_peak_mb = test_result.get("peak_memory_mb", 0)
         remaining = remaining[1:]
 
-    # Process remaining motions
-    for i, motion_file in enumerate(remaining):
-        motion_stem = motion_file.stem
-        print(f"\n[{i + len(results) + 1}/{len(motion_files)}] Processing: {motion_file.name}")
+    if not remaining:
+        return results
 
-        config_path = write_source_config(motion_file, source_type, output_dir, terrain_path, extra_options)
-        cmd = _build_command(config_path, robot_config_path, output_dir, motion_stem, framerate)
-        log_file = output_dir / "logs" / f"{motion_stem}.log"
+    if test_peak_mb > 0:
+        num_workers = _determine_workers_from_memory(
+            test_peak_mb, reserved_memory_ratio, max_workers,
+        )
+        print(f"\nMemory-based parallelism: {test_peak_mb:.0f} MB/job, "
+              f"reserved ratio={reserved_memory_ratio}, workers={num_workers}")
+    else:
+        num_workers = max_workers or max(1, (os.cpu_count() or 1) - 1)
+        print(f"\nNo memory measurement available, using {num_workers} workers")
 
-        print(f"  Command: {' '.join(cmd)}")
-        result = run_single_job(cmd, activation_prefix, log_file, timeout)
-        result["motion_file"] = str(motion_file)
-        result["motion_stem"] = motion_stem
-        results.append(result)
+    print(f"Processing {len(remaining)} remaining files with {num_workers} parallel workers\n")
 
-        if result.get("timed_out"):
-            print(f"  TIMED OUT ({result['elapsed']:.0f}s > {timeout:.0f}s limit)")
-        elif result["returncode"] == 0:
-            print(f"  OK ({result['elapsed']:.1f}s)")
-        else:
-            print(f"  FAILED (rc={result['returncode']}, {result['elapsed']:.1f}s)")
-            print(f"  Log: {result['log_file']}")
+    if num_workers == 1:
+        for i, motion_file in enumerate(remaining):
+            print(f"[{i + len(results) + 1}/{len(motion_files)}] Processing: {motion_file.name}")
+            result = _run_one_motion(
+                motion_file, source_type, robot_config_path, output_dir,
+                activation_prefix, terrain_path, extra_options, framerate, timeout,
+            )
+            results.append(result)
+            status = "TIMED OUT" if result.get("timed_out") else (
+                f"OK ({result['elapsed']:.1f}s)" if result["returncode"] == 0
+                else f"FAILED (rc={result['returncode']})"
+            )
+            print(f"  {status}")
+    else:
+        future_to_motion = {}
+        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+            for motion_file in remaining:
+                future = executor.submit(
+                    _run_one_motion,
+                    motion_file, source_type, robot_config_path, output_dir,
+                    activation_prefix, terrain_path, extra_options, framerate, timeout,
+                )
+                future_to_motion[future] = motion_file
+
+            done_count = len(results)
+            for future in as_completed(future_to_motion):
+                motion_file = future_to_motion[future]
+                done_count += 1
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    result = {
+                        "returncode": -1, "elapsed": 0, "motion_file": str(motion_file),
+                        "motion_stem": motion_file.stem, "log_file": "", "error": str(exc),
+                    }
+                results.append(result)
+                if result.get("timed_out"):
+                    status = f"TIMED OUT ({result['elapsed']:.0f}s)"
+                elif result["returncode"] == 0:
+                    status = f"OK ({result['elapsed']:.1f}s)"
+                else:
+                    status = f"FAILED (rc={result['returncode']})"
+                print(f"[{done_count}/{len(motion_files)}] {motion_file.name}: {status}")
 
     return results
 
@@ -382,6 +543,9 @@ def main() -> None:
                         help="Skip the initial probe job and process all files directly")
     parser.add_argument("--timeout", type=float, default=3600,
                         help="Per-file timeout in seconds (default: 3600)")
+    parser.add_argument("--reserved-memory-ratio", type=float, default=0.4,
+                        help="Fraction of total memory to reserve (default: 0.4). "
+                             "Workers are sized from (1 - ratio) * total_memory / per_job_memory.")
 
     args = parser.parse_args()
 
@@ -404,8 +568,11 @@ def main() -> None:
     if resources["memory_gb"] is not None:
         print(f"Total memory: {resources['memory_gb']:.1f} GB")
 
-    max_workers = args.max_workers or determine_batch_size(resources)
-    print(f"Max workers: {max_workers}")
+    max_workers = args.max_workers
+    if max_workers:
+        print(f"Max workers override: {max_workers}")
+    else:
+        print("Max workers: auto (determined from test job memory)")
 
     activation_prefix = get_activation_prefix()
     if activation_prefix:
@@ -439,10 +606,11 @@ def main() -> None:
         activation_prefix=activation_prefix,
         terrain_path=args.terrain,
         extra_options=extra_options,
-        _max_workers=max_workers,
+        max_workers=args.max_workers,
         framerate=args.framerate,
         skip_test_job=args.skip_test_job,
         timeout=args.timeout,
+        reserved_memory_ratio=args.reserved_memory_ratio,
     )
 
     failed = _summarize(results)
