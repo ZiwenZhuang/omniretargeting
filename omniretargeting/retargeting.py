@@ -927,7 +927,13 @@ class GenericInteractionRetargeter:
         m.geom_margin[:] = threshold
 
         # Run collision detection
-        mujoco.mj_collision(m, d)
+        try:
+            mujoco.mj_collision(m, d)
+        except mujoco.FatalError:
+            # Box-box or other geom pairs can exceed mjMAXCONPAIR (8 contacts).
+            # Fall back to brute-force pairwise distance checks.
+            m.geom_margin[:] = self._saved_margins
+            return self._brute_force_candidate_pairs(threshold)
 
         # Collect unique candidate pairs
         candidates = set()
@@ -941,6 +947,25 @@ class GenericInteractionRetargeter:
         # Restore original margins
         m.geom_margin[:] = self._saved_margins
 
+        return candidates
+
+    def _brute_force_candidate_pairs(self, threshold: float) -> set:
+        """Fallback: enumerate all geom pairs via mj_geomDistance."""
+        m, d = self.robot_model, self.robot_data
+        ngeom = m.ngeom
+        fromto = np.zeros(6, dtype=float)
+        candidates = set()
+        for i in range(ngeom):
+            if m.geom_contype[i] == 0 and m.geom_conaffinity[i] == 0:
+                continue
+            for j in range(i + 1, ngeom):
+                if m.geom_contype[j] == 0 and m.geom_conaffinity[j] == 0:
+                    continue
+                if m.geom_bodyid[i] == m.geom_bodyid[j]:
+                    continue
+                dist = mujoco.mj_geomDistance(m, d, i, j, threshold, fromto)
+                if dist <= threshold:
+                    candidates.add((i, j))
         return candidates
 
     def _compute_jacobian_for_contact_relative(
