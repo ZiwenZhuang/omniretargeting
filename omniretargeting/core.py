@@ -437,9 +437,18 @@ class OmniRetargeter:
         # Extract object points if present
         object_points = frame.object_points if isinstance(frame, MotionFrame) else None
 
+        solver_max_iter = self.retargeting_config.get("solver_max_iter")
+        if isinstance(solver_max_iter, dict):
+            max_iter = solver_max_iter.get("first_frame", 200) if state.frame_idx == 0 else solver_max_iter.get("subsequent", 50)
+        elif solver_max_iter is not None:
+            max_iter = int(solver_max_iter)
+        else:
+            max_iter = 10
+
         q_opt = state.retargeter.retarget_frame(
             mapped_source_targets,
             q_init,
+            max_iter=max_iter,
             q_last=state.q_last,
             target_base_orientation=target_quat_wxyz,
             object_points=object_points,

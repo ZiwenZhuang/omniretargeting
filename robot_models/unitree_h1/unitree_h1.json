@@ -536,6 +536,7 @@
   },
   "retargeting": {
     "collision_detection_threshold": 0.1,
+    "solver_max_iter": {"first_frame": 50, "subsequent": 10},
     "terrain_sample_points": 120,
     "penetration_resolver": "hard_constraint",
     "foot_stabilization": {
