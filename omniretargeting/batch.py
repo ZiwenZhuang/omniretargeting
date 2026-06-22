@@ -148,15 +148,31 @@ def _git_status(repo_path: str) -> str:
 
 
 def _git_diff(repo_path: str) -> str:
-    """Return the full git diff (staged + unstaged) for a repository."""
+    """Return the full git diff (staged + unstaged + untracked) for a repository."""
+    parts = []
     try:
         r = subprocess.run(
             ["git", "-C", repo_path, "diff", "HEAD"],
             capture_output=True, text=True, timeout=30,
         )
-        return r.stdout
+        if r.stdout.strip():
+            parts.append(r.stdout)
     except Exception as exc:
-        return f"Error getting diff: {exc}\n"
+        parts.append(f"Error getting diff: {exc}\n")
+
+    try:
+        r = subprocess.run(
+            ["git", "-C", repo_path, "ls-files", "--others", "--exclude-standard"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if r.stdout.strip():
+            parts.append("# Untracked files:\n")
+            for f in r.stdout.strip().splitlines():
+                parts.append(f"#   {f}\n")
+    except Exception:
+        pass
+
+    return "".join(parts)
 
 
 def _save_repo_snapshot(git_status_dir: Path, repo_name: str, repo_path: str) -> None:
