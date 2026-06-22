@@ -1,185 +1,57 @@
 # OmniRetargeting Progress
 
-Last Updated: 2026-06-08
+## Architecture Summary
 
-## Current Status: link_offset_config merged into target_mapping + Nokov BVH adapter ✅
+- Source-agnostic adapter architecture with per-source `target_mapping` and `base_orientation`
+- Data sources: SMPL-X, OMOMO, LAFAN1 (BVH), Nokov (BVH)
+- HOI support: `object_points` in `MotionData`/`MotionFrame`, scene scaling, OMOMO adapter
+- CLI: YAML `--source-config` mode + legacy CLI compatibility
+- Visualization: MuJoCo offscreen rendering, object mesh injection, `--save-video`
 
-The source-agnostic adapter architecture remains in place, and this branch now extends it toward
-human-object interaction support with OMOMO object sampling, object-aware visualization, and dual-mode
-CLI loading (new YAML configs plus deprecated legacy CLI compatibility).
+## Recent Changes (2026-06-22)
 
-## Current Branch Focus
+### LAFAN1 Batch Retargeting
+- Added `omniretargeting/batch.py` — parallel batch processing with memory-based worker sizing
+- Removed ground-ensuring (foot Z=0 shift) from LAFAN1 and Nokov data sources
 
-### Object Interaction (HOI) Support
-- **Status:** 🔄 Core pieces implemented and validated with focused tests
-- `MotionFrame` and `MotionData` now support per-frame `object_points`
-- `MotionData` also carries optional `object_mesh` for visualization/export
-- `OmniRetargeter.retarget_motion()` supports scene scaling for object points via `enable_scene_scaling`
-- `GenericInteractionRetargeter` accepts object points in frame retargeting
-
-### OMOMO Adapter
-- **Status:** ✅ Implemented
-- **Location:** `omniretargeting/data_sources/omomo.py`
-- Loads OMOMO sequences, object meshes, and sampled object point clouds
-- Transforms sampled object points into world coordinates per frame
-- Exposes metadata such as object name and sequence name
-
-### Visualization / Export
-- **Status:** ✅ Implemented
-- `temporary_visualization_scene()` can inject object meshes for MuJoCo visualization
-- `save_trajectory_video()` and `visualize_trajectory()` accept object meshes
-- CLI supports `--scaled-objects` export for scaled meshes and pose trajectories
-
-### CLI Migration
-- **Status:** 🔄 YAML mode added, legacy compatibility restored
-- `--source-config` YAML loading is supported for new source-driven workflows
-- Legacy CLI arguments (`--motion`, `--model-dir`, `--source`, `--source-options`) still work
-- Deprecated legacy flags now coexist with YAML mode instead of breaking existing tests
-
-## Recent Changes (2026-06-08)
-
-### link_offset_config → inline offsets in target_mapping ✅
-- Removed separate `link_offset_config` parameter from `OmniRetargeter` → `GenericInteractionRetargeter` data path
-- Offsets now embedded directly in `target_mapping` entries as `{"robot_link": "...", "offset": [dx, dy, dz]}`
-- Eliminates ~500 lines of zero-only boilerplate across all 4 robot JSONs
-- Affected files: `core.py`, `main.py`, `retargeting.py`, `robot_config.py`, `bvh_visualize.py`, `smplx_visualize.py`, `utils.py`, all robot JSONs, `test_basic.py`
-- Both string-form and dict-form `target_mapping` values are accepted throughout the codebase
-
-### Nokov BVH Data Source ✅
-- New `omniretargeting/data_sources/nokov.py` — Nokov motion-capture BVH adapter
-- New `tests/data_sources/test_nokov.py` — 16 tests all passing
-- Test fixture: `tests/resources/nokov/diveroll4_nokov.bvh` (449 KB)
-- Nokov source entry added to `unitree_g1.json` with `target_mapping` and `base_orientation`
-- Reuses `_quat_fk`, `_euler_to_quat` from LAFAN1 module; uses shared `estimate_body_height()`
-- Validated on marsbrain with 752-frame diveroll4 motion to Unitree G1
-
-### Shared utility: `estimate_body_height` ✅
-- Extracted from `SmplxDataSource` into `omniretargeting/utils.py`
-- Now used by: SMPL-X, OMOMO, LAFAN1, Nokov adapters
-- New `resolve_robot_height()` wrapper in utils.py
-
-## Recent Changes (2026-05-18)
-
-### HOI Data Flow ✅
-- Added `object_points` validation for frame and motion containers
-- Added per-frame extraction of object points through `MotionData.iter_frames()`
-- Added object-point scaling support in batch retargeting
-
-### OMOMO Integration ✅
-- Added OMOMO adapter and integration tests
-- Verified object mesh loading and sampled point generation
-- Verified OMOMO fixtures load successfully in focused tests
-
-### CLI / Compatibility Fix ✅
-- Fixed `omniretargeting/main.py` so YAML source configs do not break legacy CLI users
-- Restored compatibility with existing `tests/test_basic.py` main-script integration coverage
-- Kept deprecation path for legacy arguments while preserving current workflows
-
-## Test Results
-
-### Sequential Validation on marsbrain (2026-05-18)
-- `pytest -q tests/data_sources/test_smplx.py` → **6 passed**
-- `pytest -q tests/test_validation.py` → **8 passed**
-- `pytest -q tests/test_objects.py` → **15 passed**
-- `pytest -q tests/test_omomo_integration.py` → **7 passed**
-- `pytest -q tests/test_basic.py::TestUtils tests/test_basic.py::test_load_robot_config_nested_source_profile tests/test_basic.py::TestPackageImport` → **9 passed**
-- `pytest -q` G1 real-data main-script cases (`simplelab`, `wallflip`, `prox-sofa`) → **3 passed**
-- `pytest -q` H1 real-data main-script cases (`simplelab`, `wallflip`, `prox-sofa`) → **3 passed**
-- `pytest -q` Booster K1 real-data main-script cases (`simplelab`, `wallflip`, `prox-sofa`) → **3 passed**
-- `pytest -q` Mini Pi Plus real-data main-script cases: `simplelab` → **passed**, `wallflip` → **passed**
-- Mini Pi Plus `prox-sofa` was validated manually by running the equivalent CLI command directly on marsbrain, producing `/tmp/mini_pi_plus_prox_sofa_manual_retargeted.npz` and `/tmp/mini_pi_plus_prox_sofa_scaled.obj`
-- `python -m py_compile omniretargeting/main.py` → **passed**
-
-### Notes
-- No stale `pytest` processes remained on marsbrain after cleanup.
-- Some single-case `pytest` node-id invocations for the Mini Pi Plus `prox-sofa` case appeared to hang in the local task wrapper even though the underlying retargeting pipeline completed when run directly.
-- The previously stale progress numbers from 2026-05-11 are no longer representative of this branch.
-
-## Remaining Work
-
-1. Validate object interaction retargeting quality with real OMOMO end-to-end runs, not just structure/tests
-2. Clean up branch artifacts if confirmed safe (`*.backup`, draft notes)
-3. Decide whether to add dedicated regression tests for YAML config loading and scaled-object export
-4. Investigate why certain single-case `pytest` node-id runs can hang in the local task wrapper even when the equivalent marsbrain CLI run completes
+### MuJoCo `mj_collision` FatalError Fix
+- **Symptom:** `mujoco.FatalError: mj_narrowphase: collision function returned 9 contacts for geom pair, expected at most 8 from mj_maxContact`
+- **Root cause:** `mjMAXCONPAIR=8` is a compile-time constant in MuJoCo. Box-box face-face overlap can produce up to 12 contacts.
+- **MuJoCo upstream (v3.9.0):** Not fixed. The limit is still hardcoded.
+- **Fix in `retargeting.py`:** `_prefilter_pairs_with_mj_collision()` catches `mujoco.FatalError` and falls back to `_brute_force_candidate_pairs()` (pairwise `mj_geomDistance`, negligible cost).
+- **Alternative long-term fix:** Change fist geoms from boxes to capsules/spheres in the URDF.
 
 ## Key Files
 
 ### Core
-- `omniretargeting/core.py` - scene scaling and frame object-point handling
-- `omniretargeting/retargeting.py` - interaction mesh construction with environment/object samples
-- `omniretargeting/main.py` - YAML + legacy CLI loading, visualization, export
+- `omniretargeting/core.py` — OmniRetargeter, scene scaling, frame dispatch
+- `omniretargeting/retargeting.py` — GenericInteractionRetargeter, collision constraints
+- `omniretargeting/main.py` — CLI entry point (YAML + legacy)
+- `omniretargeting/batch.py` — parallel batch processing
 
 ### Data Sources
-- `omniretargeting/data_sources/base.py` - motion container object fields and validation
-- `omniretargeting/data_sources/omomo.py` - OMOMO object adapter
-- `omniretargeting/data_sources/smplx.py` - SMPL-X adapter used by legacy/integration flows
+- `omniretargeting/data_sources/base.py` — MotionData/MotionFrame containers
+- `omniretargeting/data_sources/smplx.py` — SMPL-X adapter
+- `omniretargeting/data_sources/omomo.py` — OMOMO object interaction adapter
+- `omniretargeting/data_sources/lafan1.py` — LAFAN1 BVH adapter
+- `omniretargeting/data_sources/nokov.py` — Nokov BVH adapter
+
+### Robot Configs
+- `robot_models/unitree_g1/unitree_g1.json`
+- `robot_models/unitree_h1/unitree_h1.json`
+- `robot_models/booster_k1/booster_k1.json`
+- `robot_models/hightorque_mini_pi_plus/hightorque_mini_pi_plus.json`
 
 ### Tests
-- `tests/test_objects.py` - object-point unit coverage
-- `tests/test_omomo_integration.py` - OMOMO integration coverage
-- `tests/test_basic.py` - CLI and regression coverage
+- `tests/test_basic.py` — CLI and regression coverage
+- `tests/test_objects.py` — object-point unit coverage
+- `tests/test_omomo_integration.py` — OMOMO integration
+- `tests/data_sources/test_lafan1.py` — 15 tests
+- `tests/data_sources/test_nokov.py` — 16 tests
+- `tests/data_sources/test_smplx.py` — 6 tests
 
-## Conclusion
+## Remaining Work
 
-This branch now has the main HOI plumbing in place: object-aware motion containers, OMOMO adapter support,
-object visualization/export, and a CLI that supports the new YAML path without regressing the existing
-main-script workflows. The next important step is deeper end-to-end validation of actual retargeted HOI output quality.
-
-## Investigation Note (2026-05-20)
-
-### OMOMO Object Mesh Orientation
-- The stale AGENTS.md note about base orientation has been removed; the current architecture note correctly says root orientation comes from motion_data.root_orientations.
-- Diagnostics on the OMOMO floorlamp sequence showed the raw object transform convention itself was consistent with a vertical lamp when using the adapter's current point transform (scaled_points at rotation.T plus translation).
-- The first render issue was a visualization/export handoff mismatch: build_object_tracks() needed to transpose each object rotation so the rendered mesh used the same world-frame convention as the sampled OMOMO object points.
-- The second render issue was in MuJoCo dynamic mesh binding: _dynamic_object_specs() was storing 2 * object_mesh_ids[obj_idx] instead of the actual mesh asset id, so the renderer could attach the object transform to the wrong mesh asset/data id.
-- After changing build_object_tracks() to transpose the rotation and _dynamic_object_specs() to preserve the real mesh id, a second marsbrain render test succeeded and wrote updated outputs under /tmp/omniretargeting_20260520_tests/, including floorlamp_orientation_fix_v2.mp4, floorlamp_retargeted_v2_retargeted.npz, and floorlamp_scaled_objects_v2/.
-
-## Configuration Cleanup Note (2026-05-21)
-
-- Moved robot profile source-target link mappings from top-level `joint_mapping` into each source entry as `target_mapping` so source target names stay source-local.
-
-## LAFAN1 BVH Adapter Added (2026-05-26)
-
-- Added `omniretargeting/data_sources/lafan1.py` - BVH motion data source adapter
-- Added `config_templates/lafan1_template.yaml` - usage template
-- Added `tests/data_sources/test_lafan1.py` - 15 focused tests (all passing)
-- Self-contained BVH parser (no external dependencies beyond numpy/scipy)
-- Auto-detects: bone hierarchy, framerate from Frame Time, human height from head/foot positions
-- Converts BVH Y-up coordinates (cm) to Z-up (meters)
-- Root orientations returned as axis-angle (rotvec) for consistency with existing adapters
-- Registered as "lafan1" source type, usable via --source-config YAML
-
-## LAFAN1 Rendering Validation (2026-05-26)
-
-- Rendered 3 LAFAN1 motions to Unitree G1 with flat terrain on marsbrain:
-  - `fallAndGetUp1_subject1.bvh` (5,047 frames) - fall and recovery
-  - `fight1_subject5.bvh` (7,347 frames) - fighting motion
-  - `sprint1_subject2.bvh` (8,194 frames) - sprinting motion
-- All rendered successfully via `--save-video` with `MUJOCO_GL=egl`
-- Output: `/tmp/omniretargeting_lafan1_demo/` (videos + .npz files)
-- Used LAFAN1→G1 joint mapping: Hips→pelvis, LeftUpLeg→left_hip_roll_link, RightUpLeg→right_hip_roll_link, Spine1→waist_roll_link, etc.
-- Base orientation config needed override for LAFAN1 bone names (Hips, LeftUpLeg, RightUpLeg, Spine1 vs SMPL-X Pelvis, L_Hip, R_Hip, Spine1)
-- Robot config still needs permanent lafan1 source entry; current workaround uses /tmp/g1_lafan1_config.json
-
-## LAFAN1 Robot Config + per-source base_orientation (2026-05-26)
-
-- Modified `omniretargeting/main.py` to support per-source `base_orientation`:
-  - `selected_source.get("base_orientation", robot_config.get("base_orientation"))`
-  - Falls back to top-level base_orientation for backward compatibility
-- Added `lafan1` source entries to all 4 robot configs with:
-  - `target_mapping`: LAFAN1 bone names mapped to robot links
-  - `base_orientation`: Hips/LeftUpLeg/RightUpLeg/Spine1
-- Robots configured: unitree_g1 (14 joints), unitree_h1 (12 joints), booster_k1 (13 joints), hightorque_mini_pi_plus (14 joints)
-- Re-rendered fallAndGetUp1 with fixed config (fall_v2.mp4)
-
-## Arm Mapping Fix + per-source link_offset_config (2026-05-27)
-
-- Fixed LAFAN1 arm mapping across all 4 robot configs. The arm chain was shifted by one joint:
-  - `LeftShoulder` (clavicle) → **unmapped** (was wrongly mapped to shoulder_roll_link)
-  - `LeftArm` (shoulder joint) → shoulder_roll_link (was wrongly mapped to elbow_link)
-  - `LeftForeArm` (elbow joint) → elbow_link (was wrongly mapped to wrist_yaw_link)
-  - `LeftHand` (wrist joint) → wrist_yaw_link (was unmapped)
-  - Same fix applied to right arm chain
-- Moved `link_offset_config` into each source entry (smplx, omomo, lafan1) with fallback to top-level
-- Updated `main.py` to check `selected_source.get("link_offset_config", robot_config.get("link_offset_config"))`
-- Re-rendered fallAndGetUp1 as fall_v3.mp4 with corrected arm mapping
+1. Validate HOI retargeting quality with real OMOMO end-to-end runs
+2. Decide whether to add regression tests for YAML config loading and scaled-object export
+3. Complete LAFAN1 batch retargeting and validate output quality

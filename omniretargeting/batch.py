@@ -147,19 +147,36 @@ def _git_status(repo_path: str) -> str:
     return "\n".join(lines)
 
 
-def log_repo_status(output_dir: Path, robot_config_path: str | None = None) -> Path:
-    """Write git status of this repo (and URDF package repo if applicable) to a log file."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    status_file = output_dir / "repo_status.log"
+def _git_diff(repo_path: str) -> str:
+    """Return the full git diff (staged + unstaged) for a repository."""
+    try:
+        r = subprocess.run(
+            ["git", "-C", repo_path, "diff", "HEAD"],
+            capture_output=True, text=True, timeout=30,
+        )
+        return r.stdout
+    except Exception as exc:
+        return f"Error getting diff: {exc}\n"
 
-    parts: list[str] = []
-    parts.append("=== Repository Status Log ===")
-    parts.append(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    parts.append("")
 
-    parts.append(f"--- OmniRetargeting ({REPO_ROOT}) ---")
-    parts.append(_git_status(str(REPO_ROOT)))
-    parts.append("")
+def _save_repo_snapshot(git_status_dir: Path, repo_name: str, repo_path: str) -> None:
+    """Save git status and full diff for a repo into the git_status folder."""
+    status = _git_status(repo_path)
+    with open(git_status_dir / f"{repo_name}.status", "w") as f:
+        f.write(status + "\n")
+
+    diff = _git_diff(repo_path)
+    if diff.strip():
+        with open(git_status_dir / f"{repo_name}.diff", "w") as f:
+            f.write(diff)
+
+
+def log_repo_status(output_dir: Path, robot_config_path: str | None = None) -> None:
+    """Save git status and diffs for relevant repos into ``git_status/``."""
+    git_status_dir = output_dir / "git_status"
+    git_status_dir.mkdir(parents=True, exist_ok=True)
+
+    _save_repo_snapshot(git_status_dir, "omniretargeting", str(REPO_ROOT))
 
     if robot_config_path:
         rc_path = Path(robot_config_path)
@@ -176,16 +193,11 @@ def log_repo_status(output_dir: Path, robot_config_path: str | None = None) -> P
                         pkg_dir = Path(mod.__file__).parent
                         git_root = _find_git_root(pkg_dir)
                         if git_root:
-                            parts.append(f"--- URDF Package '{pkg_name}' ({git_root}) ---")
-                            parts.append(_git_status(git_root))
-                            parts.append("")
+                            _save_repo_snapshot(git_status_dir, pkg_name, git_root)
                 except Exception:
                     pass
 
-    with open(status_file, "w") as f:
-        f.write("\n".join(parts) + "\n")
-    print(f"Repository status logged to {status_file}")
-    return status_file
+    print(f"Repository status saved to {git_status_dir}")
 
 
 def _build_command(
