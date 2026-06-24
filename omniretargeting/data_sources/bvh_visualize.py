@@ -203,6 +203,7 @@ def main():
         rot_z = np.array([[cos_a, -sin_a, 0], [sin_a, cos_a, 0], [0, 0, 1]])
         for i in range(len(body_positions)):
             body_positions[i] = body_positions[i] @ rot_z.T
+            body_rotations[i] = rot_z @ body_rotations[i]
         print(f"[bvh_viz] applied yaw rotation: {args.yaw} degrees")
 
     # Scale source to robot height (anchor at foot level)

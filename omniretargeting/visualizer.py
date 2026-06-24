@@ -72,12 +72,6 @@ def build_object_tracks(motion_data, source_to_robot_scale: float, apply_scene_s
 
 
 
-def create_flat_terrain(size: float = 10.0) -> trimesh.Trimesh:
-    mesh = trimesh.creation.box(extents=[size, size, 0.1])
-    mesh.apply_translation([0.0, 0.0, -0.05])
-    return mesh
-
-
 def _ensure_mujoco_compiler_settings(xml_str: str) -> str:
     """Ensure ``<mujoco><compiler>`` settings are present in a URDF XML string.
 
@@ -162,13 +156,21 @@ def temporary_visualization_scene(
             worldbody = ET.SubElement(root, "worldbody")
 
         if terrain_mesh is not None:
-            terrain_mesh = _simplify_terrain(terrain_mesh, target_faces)
-            terrain_path = os.path.join(temp_dir, "terrain.obj")
-            terrain_mesh.export(terrain_path)
-            asset.append(ET.fromstring(f'<mesh name="terrain_vis_mesh" file="{terrain_path}"/>'))
-            asset.append(ET.fromstring('<texture name="terrain_tex" type="2d" builtin="checker" rgb1=".2 .3 .4" rgb2=".1 .2 .3" width="512" height="512" mark="cross" markrgb=".8 .8 .8"/>'))
-            asset.append(ET.fromstring('<material name="terrain_mat" texture="terrain_tex" texrepeat="10 10" reflectance="0.5"/>'))
-            worldbody.append(ET.fromstring('<geom name="terrain_geom" type="mesh" mesh="terrain_vis_mesh" material="terrain_mat" pos="0 0 0"/>'))
+            zvals = terrain_mesh.vertices[:, 2]
+            is_flat_plane = (zvals.max() - zvals.min()) < 1e-6
+            if is_flat_plane:
+                z = float(zvals.mean())
+                asset.append(ET.fromstring('<texture name="terrain_tex" type="2d" builtin="checker" rgb1=".2 .3 .4" rgb2=".1 .2 .3" width="512" height="512" mark="cross" markrgb=".8 .8 .8"/>'))
+                asset.append(ET.fromstring('<material name="terrain_mat" texture="terrain_tex" texrepeat="10 10" reflectance="0.5"/>'))
+                worldbody.append(ET.fromstring(f'<geom name="terrain_geom" type="plane" material="terrain_mat" pos="0 0 {z}" size="5 5 0.1"/>'))
+            else:
+                terrain_mesh = _simplify_terrain(terrain_mesh, target_faces)
+                terrain_path = os.path.join(temp_dir, "terrain.obj")
+                terrain_mesh.export(terrain_path)
+                asset.append(ET.fromstring(f'<mesh name="terrain_vis_mesh" file="{terrain_path}"/>'))
+                asset.append(ET.fromstring('<texture name="terrain_tex" type="2d" builtin="checker" rgb1=".2 .3 .4" rgb2=".1 .2 .3" width="512" height="512" mark="cross" markrgb=".8 .8 .8"/>'))
+                asset.append(ET.fromstring('<material name="terrain_mat" texture="terrain_tex" texrepeat="10 10" reflectance="0.5"/>'))
+                worldbody.append(ET.fromstring('<geom name="terrain_geom" type="mesh" mesh="terrain_vis_mesh" material="terrain_mat" pos="0 0 0"/>'))
 
         for idx, track in enumerate(object_tracks):
             mesh_path = os.path.join(temp_dir, f"object_{idx}.obj")

@@ -12,9 +12,9 @@ from omniretargeting import OmniRetargeter
 from omniretargeting.robot_config import load_robot_config
 from omniretargeting.data_sources.registry import create_data_source
 from omniretargeting.utils import normalize_retargeted_output_path
+from omniretargeting.utils import create_flat_terrain
 from omniretargeting.visualizer import (
     build_object_tracks,
-    create_flat_terrain,
     save_trajectory_video,
     visualize_trajectory,
 )

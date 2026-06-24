@@ -154,3 +154,7 @@ cython_debug/
 
 # OS specific
 .DS_Store
+
+# workflow specific
+.vscode
+agents/computation
