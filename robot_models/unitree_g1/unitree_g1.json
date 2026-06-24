@@ -535,6 +535,83 @@
         "spine": "Spine1"
       },
       "default_pose_on_robot": "T-Pose"
+    },
+    {
+      "name": "bones_seed",
+      "type": "bones_seed",
+      "target_mapping": {
+        "Spine2": {
+          "robot_link": "pelvis",
+          "offset": [0.0, 0.0, 0.02]
+        },
+        "LeftLeg": {
+          "robot_link": "left_hip_pitch_link",
+          "offset": [0.0, 0.0, 0.0]
+        },
+        "RightLeg": {
+          "robot_link": "right_hip_pitch_link",
+          "offset": [0.0, 0.0, 0.0]
+        },
+        "LeftShin": {
+          "robot_link": "left_knee_link",
+          "offset": [0.0, 0.0, 0.0]
+        },
+        "RightShin": {
+          "robot_link": "right_knee_link",
+          "offset": [0.0, 0.0, 0.0]
+        },
+        "LeftFoot": {
+          "robot_link": "left_ankle_pitch_link",
+          "offset": [0.0, 0.0, 0.0]
+        },
+        "RightFoot": {
+          "robot_link": "right_ankle_pitch_link",
+          "offset": [0.0, 0.0, 0.0]
+        },
+        "LeftToeBase": {
+          "robot_link": "left_ankle_roll_link",
+          "offset": [0.1, 0.0, -0.04]
+        },
+        "RightToeBase": {
+          "robot_link": "right_ankle_roll_link",
+          "offset": [0.1, 0.0, -0.04]
+        },
+        "LeftArm": {
+          "robot_link": "left_shoulder_roll_link",
+          "offset": [0.0, 0.0, 0.0]
+        },
+        "RightArm": {
+          "robot_link": "right_shoulder_roll_link",
+          "offset": [0.0, 0.0, 0.0]
+        },
+        "LeftForeArm": {
+          "robot_link": "left_elbow_link",
+          "offset": [0.0, 0.0, 0.0]
+        },
+        "RightForeArm": {
+          "robot_link": "right_elbow_link",
+          "offset": [0.0, 0.0, 0.0]
+        },
+        "LeftHand": {
+          "robot_link": "left_wrist_yaw_link",
+          "offset": [0.0, 0.0, 0.0]
+        },
+        "RightHand": {
+          "robot_link": "right_wrist_yaw_link",
+          "offset": [0.0, 0.0, 0.0]
+        },
+        "Chest": {
+          "robot_link": "waist_roll_link",
+          "offset": [0.0, 0.0, 0.03]
+        }
+      },
+      "base_orientation": {
+        "pelvis": "Hips",
+        "left_hip": "LeftLeg",
+        "right_hip": "RightLeg",
+        "spine": "Spine1"
+      },
+      "default_pose_on_robot": "T-Pose"
     }
   ],
   "height_estimation": {
