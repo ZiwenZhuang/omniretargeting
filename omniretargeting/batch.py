@@ -632,6 +632,12 @@ def main() -> None:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    if args.recursive and output_dir.resolve().is_relative_to(source_folder.resolve()):
+        raise ValueError(
+            f"--output-dir ({args.output_dir}) must not be inside "
+            f"--source-folder ({args.source_folder}) when --recursive is used"
+        )
+
     # Environment detection
     resources = detect_resources()
     print(f"CPU cores: {resources['cpu_count']}")
