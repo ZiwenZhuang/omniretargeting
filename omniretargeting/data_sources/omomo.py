@@ -250,4 +250,4 @@ def create_omomo_data_source(motion_file, source_config, runtime_options):
 
 from .registry import register_data_source
 
-register_data_source("omomo", create_omomo_data_source)
+register_data_source("omomo", create_omomo_data_source, extensions=[".npz"])

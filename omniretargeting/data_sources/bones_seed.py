@@ -282,4 +282,4 @@ def create_bones_seed_data_source(
     )
 
 
-register_data_source("bones_seed", create_bones_seed_data_source)
+register_data_source("bones_seed", create_bones_seed_data_source, extensions=[".bvh"])
