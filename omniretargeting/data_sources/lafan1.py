@@ -287,7 +287,7 @@ class Lafan1DataSource(DataSource):
 
         root_translations = transformed_positions[:, 0, :].copy()
 
-        # Estimate human height from the first frame
+        # Estimate human height across all frames
         # LAFAN1 uses multiple naming conventions across subjects; try known candidates.
         head_name_candidates = ["Head", "head", "Neck", "Neck1"]
         foot_name_candidates: list[tuple[str, str]] = [
@@ -347,4 +347,4 @@ def create_lafan1_data_source(
     )
 
 
-register_data_source("lafan1", create_lafan1_data_source)
+register_data_source("lafan1", create_lafan1_data_source, extensions=[".bvh"])
