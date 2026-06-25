@@ -8,7 +8,13 @@ from .base import (
     validate_motion_positions,
     validate_object_points,
 )
-from .registry import create_data_source, get_data_source_factory, register_data_source, registered_source_types
+from .registry import (
+    create_data_source,
+    get_data_source_factory,
+    get_source_extensions,
+    register_data_source,
+    registered_source_types,
+)
 
 __all__ = [
     "DataSource",
@@ -16,6 +22,7 @@ __all__ = [
     "MotionFrame",
     "create_data_source",
     "get_data_source_factory",
+    "get_source_extensions",
     "register_data_source",
     "registered_source_types",
     "validate_motion_frame_positions",

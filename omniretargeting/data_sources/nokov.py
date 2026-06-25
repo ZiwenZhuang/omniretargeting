@@ -254,7 +254,7 @@ class NokovDataSource(DataSource):
 
         root_translations = transformed_positions[:, 0, :].copy()
 
-        # Estimate human height from the first frame
+        # Estimate human height across all frames
         source_height = self._estimate_height(names, transformed_positions)
 
         framerate = 1.0 / frametime if frametime > 0 else 30.0
@@ -280,7 +280,7 @@ class NokovDataSource(DataSource):
         names: list[str],
         positions: np.ndarray,
     ) -> float:
-        """Estimate human height from the first frame using shared utility.
+        """Estimate human height across all frames using shared utility.
 
         Args:
             names: List of joint names.
@@ -314,4 +314,4 @@ def create_nokov_data_source(
     )
 
 
-register_data_source("nokov", create_nokov_data_source)
+register_data_source("nokov", create_nokov_data_source, extensions=[".bvh"])

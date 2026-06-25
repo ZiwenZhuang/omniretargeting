@@ -377,4 +377,4 @@ def retarget_smplx_to_robot(
     )
 
 
-register_data_source("smplx", create_smplx_data_source)
+register_data_source("smplx", create_smplx_data_source, extensions=[".npz"])

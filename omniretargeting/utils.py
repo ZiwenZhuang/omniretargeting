@@ -280,9 +280,10 @@ def estimate_body_height(
 ) -> float | None:
     """Estimate human height from joint positions by finding the head-to-foot distance.
 
-    Uses the first frame (T-pose or standing frame). If named joints are not found
-    in target_names, returns *fallback_height*. If *positions* is empty or ``None``,
-    returns ``None``.
+    Estimates height from the maximum head-to-foot Z-distance across all frames,
+    clipped to [*min_height*, *max_height*].  If named joints are not found in
+    *target_names*, returns *fallback_height*.  If *positions* is empty or
+    ``None``, returns ``None``.
 
     Args:
         positions: Joint positions array of shape ``(T, J, 3)``.
@@ -321,9 +322,10 @@ def estimate_body_height(
         return fallback_height
 
     try:
-        head_z = float(positions[0, head_idx, 2])
-        feet_z = min(float(positions[0, fi, 2]) for fi in foot_indices)
-        estimated_height = head_z - feet_z + head_top_offset
+        head_positions = positions[:, head_idx, 2]
+        feet_positions = np.min(positions[:, foot_indices, 2], axis=1)
+        per_frame_height = np.abs(head_positions - feet_positions) + head_top_offset
+        estimated_height = float(np.max(per_frame_height))
         return float(np.clip(estimated_height, min_height, max_height))
     except (IndexError, TypeError):
         return fallback_height

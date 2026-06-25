@@ -27,14 +27,9 @@ from pathlib import Path
 
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+from omniretargeting.data_sources.registry import get_source_extensions
 
-_SOURCE_EXTENSIONS = {
-    "smplx": [".npz"],
-    "lafan1": [".bvh"],
-    "nokov": [".bvh"],
-    "omomo": [".npz"],
-}
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def detect_resources() -> dict:
@@ -50,13 +45,42 @@ def detect_resources() -> dict:
     return {"cpu_count": cpu_count, "memory_gb": memory_gb}
 
 
-def scan_source_folder(folder: Path, source_type: str) -> list[Path]:
+def scan_source_folder(folder: Path, source_type: str, recursive: bool = False, exclude_suffix: str | None = None) -> list[Path]:
     """Return motion files in *folder* matching *source_type*, sorted by name."""
-    exts = _SOURCE_EXTENSIONS.get(source_type, [".npz", ".bvh"])
+    try:
+        exts = get_source_extensions(source_type)
+    except ValueError:
+        exts = [".npz", ".bvh"]  # fallback for unregistered source types
     files: list[Path] = []
     for ext in exts:
-        files.extend(sorted(folder.glob(f"*{ext}")))
+        pattern = f"**/*{ext}" if recursive else f"*{ext}"
+        files.extend(sorted(folder.glob(pattern)))
+    if exclude_suffix:
+        files = [f for f in files if not f.name.endswith(exclude_suffix)]
     return files
+
+
+def _resolve_rel_subdir(motion_file: Path, source_folder: Path | None) -> str | None:
+    """Return the relative subdirectory of *motion_file* within *source_folder*.
+
+    Returns None for files directly in *source_folder* or when *source_folder*
+    is None.
+    """
+    if source_folder and motion_file.is_relative_to(source_folder):
+        s = str(motion_file.parent.relative_to(source_folder))
+        return None if s == "." else s
+    return None
+
+
+def _output_exists(
+    motion_file: Path,
+    output_dir: Path,
+    source_folder: Path | None = None,
+) -> bool:
+    """Return True if the retargeted .npz for *motion_file* already exists."""
+    rel_subdir = _resolve_rel_subdir(motion_file, source_folder)
+    motion_dir = output_dir / "motions" / (rel_subdir or "") / motion_file.stem
+    return (motion_dir / f"{motion_file.stem}_retargeted.npz").is_file()
 
 
 def write_source_config(
@@ -65,6 +89,7 @@ def write_source_config(
     output_dir: Path,
     terrain_path: str | None = None,
     extra_options: dict | None = None,
+    rel_subdir: str | None = None,
 ) -> Path:
     """Write a per-motion YAML source config and return its path."""
     config: dict = {
@@ -76,7 +101,7 @@ def write_source_config(
     if extra_options:
         config.update(extra_options)
 
-    configs_dir = output_dir / "configs"
+    configs_dir = output_dir / "configs" / (rel_subdir or "")
     configs_dir.mkdir(parents=True, exist_ok=True)
     config_path = configs_dir / f"{motion_path.stem}_config.yaml"
     with open(config_path, "w") as f:
@@ -222,9 +247,13 @@ def _build_command(
     output_dir: Path,
     motion_stem: str,
     framerate: float | None = None,
+    rel_subdir: str | None = None,
 ) -> list[str]:
     """Build the main.py argument list for one motion file."""
-    motion_dir = output_dir / "motions" / motion_stem
+    if rel_subdir:
+        motion_dir = output_dir / "motions" / rel_subdir / motion_stem
+    else:
+        motion_dir = output_dir / "motions" / motion_stem
     motion_dir.mkdir(parents=True, exist_ok=True)
 
     cmd = [
@@ -354,13 +383,15 @@ def _run_test_job(
     extra_options: dict,
     framerate: float | None,
     timeout: float,
+    source_folder: Path | None = None,
 ) -> dict:
     """Run the first motion as a probe job.  Returns timing info for batch-size tuning."""
     first = motion_files[0]
     print(f"\n--- Running test job: {first.name} ---")
-    config_path = write_source_config(first, source_type, output_dir, terrain_path, extra_options)
-    cmd = _build_command(config_path, robot_config_path, output_dir, first.stem, framerate)
-    log_file = output_dir / "logs" / f"{first.stem}.log"
+    rel_subdir = _resolve_rel_subdir(first, source_folder)
+    config_path = write_source_config(first, source_type, output_dir, terrain_path, extra_options, rel_subdir)
+    cmd = _build_command(config_path, robot_config_path, output_dir, first.stem, framerate, rel_subdir)
+    log_file = output_dir / "logs" / (f"{rel_subdir}/{first.stem}.log" if rel_subdir else f"{first.stem}.log")
 
     print(f"  Command: {' '.join(cmd)}")
     result = run_single_job(cmd, activation_prefix, log_file, timeout, measure_memory=True)
@@ -415,12 +446,14 @@ def _run_one_motion(
     extra_options: dict,
     framerate: float | None,
     timeout: float,
+    source_folder: Path | None = None,
 ) -> dict:
     """Process a single motion file (called from worker processes)."""
     motion_stem = motion_file.stem
-    config_path = write_source_config(motion_file, source_type, output_dir, terrain_path, extra_options)
-    cmd = _build_command(config_path, robot_config_path, output_dir, motion_stem, framerate)
-    log_file = output_dir / "logs" / f"{motion_stem}.log"
+    rel_subdir = _resolve_rel_subdir(motion_file, source_folder)
+    config_path = write_source_config(motion_file, source_type, output_dir, terrain_path, extra_options, rel_subdir)
+    cmd = _build_command(config_path, robot_config_path, output_dir, motion_stem, framerate, rel_subdir)
+    log_file = output_dir / "logs" / (f"{rel_subdir}/{motion_stem}.log" if rel_subdir else f"{motion_stem}.log")
     result = run_single_job(cmd, activation_prefix, log_file, timeout)
     result["motion_file"] = str(motion_file)
     result["motion_stem"] = motion_stem
@@ -439,7 +472,8 @@ def process_batch(
     framerate: float | None = None,
     skip_test_job: bool = False,
     timeout: float = 3600,
-    reserved_memory_ratio: float = 0.5,
+    reserved_memory_ratio: float = 0.4,
+    source_folder: Path | None = None,
 ) -> list[dict]:
     """Process every motion file, returning per-file results.
 
@@ -457,6 +491,7 @@ def process_batch(
         test_result = _run_test_job(
             remaining, source_type, robot_config_path, output_dir,
             activation_prefix, terrain_path, extra_options, framerate, timeout,
+            source_folder=source_folder,
         )
         results.append(test_result)
         if test_result["returncode"] != 0:
@@ -486,6 +521,7 @@ def process_batch(
             result = _run_one_motion(
                 motion_file, source_type, robot_config_path, output_dir,
                 activation_prefix, terrain_path, extra_options, framerate, timeout,
+                source_folder=source_folder,
             )
             results.append(result)
             status = "TIMED OUT" if result.get("timed_out") else (
@@ -501,6 +537,7 @@ def process_batch(
                     _run_one_motion,
                     motion_file, source_type, robot_config_path, output_dir,
                     activation_prefix, terrain_path, extra_options, framerate, timeout,
+                    source_folder,
                 )
                 future_to_motion[future] = motion_file
 
@@ -551,8 +588,7 @@ def main() -> None:
     parser.add_argument("--source-folder", required=True,
                         help="Folder containing motion files to process")
     parser.add_argument("--source-type", required=True,
-                        choices=["smplx", "lafan1", "nokov", "omomo"],
-                        help="Type of motion data source")
+                        help="Type of motion data source (e.g. smplx, lafan1, nokov, omomo, bones_seed)")
     parser.add_argument("--robot-config", required=True,
                         help="Path to robot configuration JSON file")
     parser.add_argument("--output-dir", required=True,
@@ -574,6 +610,12 @@ def main() -> None:
     parser.add_argument("--reserved-memory-ratio", type=float, default=0.4,
                         help="Fraction of total memory to reserve (default: 0.4). "
                              "Workers are sized from (1 - ratio) * total_memory / per_job_memory.")
+    parser.add_argument("--recursive", action="store_true",
+                        help="Scan source folder recursively for motion files")
+    parser.add_argument("--exclude-suffix", default=None,
+                        help="Exclude files ending with this suffix (e.g. '_M.bvh' for mirrored files)")
+    parser.add_argument("--resume", action="store_true",
+                        help="Skip motions whose retargeted output already exists")
 
     args = parser.parse_args()
 
@@ -589,6 +631,12 @@ def main() -> None:
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.recursive and output_dir.resolve().is_relative_to(source_folder.resolve()):
+        raise ValueError(
+            f"--output-dir ({args.output_dir}) must not be inside "
+            f"--source-folder ({args.source_folder}) when --recursive is used"
+        )
 
     # Environment detection
     resources = detect_resources()
@@ -612,11 +660,22 @@ def main() -> None:
     log_repo_status(output_dir, args.robot_config)
 
     # Scan for motion files
-    motion_files = scan_source_folder(source_folder, args.source_type)
+    motion_files = scan_source_folder(source_folder, args.source_type, recursive=args.recursive, exclude_suffix=args.exclude_suffix)
     if not motion_files:
         print(f"Error: no motion files found in {args.source_folder} for type '{args.source_type}'")
         sys.exit(1)
     print(f"Found {len(motion_files)} motion file(s)")
+
+    # Resume: skip motions whose retargeted output already exists
+    if args.resume:
+        source_root = source_folder if args.recursive else None
+        completed = [f for f in motion_files if _output_exists(f, output_dir, source_root)]
+        if completed:
+            print(f"Resume: skipping {len(completed)} already-processed motion(s)")
+        motion_files = [f for f in motion_files if f not in set(completed)]
+        if not motion_files:
+            print("All motions already processed. Nothing to do.")
+            sys.exit(0)
 
     # Build shared extra options
     extra_options: dict = {}
@@ -639,6 +698,7 @@ def main() -> None:
         skip_test_job=args.skip_test_job,
         timeout=args.timeout,
         reserved_memory_ratio=args.reserved_memory_ratio,
+        source_folder=source_folder if args.recursive else None,
     )
 
     failed = _summarize(results)

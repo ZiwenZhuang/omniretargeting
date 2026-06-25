@@ -11,13 +11,20 @@ from omniretargeting.data_sources.base import DataSource
 DataSourceFactory = Callable[[Path, Mapping[str, Any], Mapping[str, Any] | None], DataSource]
 
 _DATA_SOURCE_FACTORIES: dict[str, DataSourceFactory] = {}
+_DATA_SOURCE_EXTENSIONS: dict[str, list[str]] = {}
 
 
-def register_data_source(source_type: str, factory: DataSourceFactory) -> None:
+def register_data_source(
+    source_type: str,
+    factory: DataSourceFactory,
+    extensions: list[str] | None = None,
+) -> None:
     normalized_type = _normalize_source_type(source_type)
     if not normalized_type:
         raise ValueError("source_type must be a non-empty string.")
     _DATA_SOURCE_FACTORIES[normalized_type] = factory
+    if extensions:
+        _DATA_SOURCE_EXTENSIONS[normalized_type] = extensions
 
 
 def get_data_source_factory(source_type: str) -> DataSourceFactory:
@@ -43,6 +50,25 @@ def create_data_source(
 
 def registered_source_types() -> list[str]:
     return sorted(_DATA_SOURCE_FACTORIES)
+
+
+def get_source_extensions(source_type: str) -> list[str]:
+    """Return the file extensions associated with *source_type*.
+
+    Triggers lazy import of the adapter module if the type is not yet
+    registered, matching the behaviour of :func:`get_data_source_factory`.
+    """
+    normalized_type = _normalize_source_type(source_type)
+    if normalized_type not in _DATA_SOURCE_EXTENSIONS:
+        _import_adapter_module(normalized_type)
+    try:
+        return list(_DATA_SOURCE_EXTENSIONS[normalized_type])
+    except KeyError as exc:
+        available = ", ".join(sorted(_DATA_SOURCE_EXTENSIONS)) or "none"
+        raise ValueError(
+            f"Unsupported source type {source_type!r}. "
+            f"Registered sources with extensions: {available}."
+        ) from exc
 
 
 def _normalize_source_type(source_type: str) -> str:
