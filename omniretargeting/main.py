@@ -133,6 +133,8 @@ def main():
     parser.add_argument("--vis", action="store_true", help="Visualize the retargeted motion")
     parser.add_argument("--save-video", dest="save_video", default=None, help="Save retargeted motion video to file (e.g. /tmp/out.mp4). Uses offscreen rendering (set MUJOCO_GL=egl for headless).")
     parser.add_argument("--framerate", type=float, default=None, help="Framerate of the motion (optional, defaults to 30.0 or auto-detected)")
+    parser.add_argument("--output-framerate", dest="output_framerate", type=float, default=None,
+                        help="Resample motion to this framerate before retargeting (e.g. 30 to downsample 120fps data)")
     parser.add_argument("--replace-cylinders-with-capsules", dest="replace_cylinders_with_capsules", action="store_true", default=False,
                         help="Legacy flag to replace cylinder collision geoms with capsules to match IsaacLab/PhysX convention.")
     parser.add_argument("--penetration-resolver", choices=["hard_constraint", "xyz_nudge"], default=None,
@@ -292,6 +294,14 @@ def main():
             print(f"Using default framerate: {framerate}")
         else:
             print(f"Using framerate: {framerate}")
+
+        if args.output_framerate is not None:
+            print(f"Resampling from {framerate}fps to {args.output_framerate}fps...")
+            motion_data = motion_data.resample(args.output_framerate)
+            source_positions = motion_data.positions
+            source_orientations = motion_data.metadata.get("joint_orientations")
+            framerate = args.output_framerate
+            print(f"Resampled: {motion_data.positions.shape[0]} frames at {framerate}fps")
 
         print(f"Loaded trajectory with shape: {source_positions.shape}")
         if source_orientations is not None:

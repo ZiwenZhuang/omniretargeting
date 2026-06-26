@@ -247,6 +247,7 @@ def _build_command(
     output_dir: Path,
     motion_stem: str,
     framerate: float | None = None,
+    output_framerate: float | None = None,
     rel_subdir: str | None = None,
 ) -> list[str]:
     """Build the main.py argument list for one motion file."""
@@ -267,6 +268,8 @@ def _build_command(
     ]
     if framerate is not None:
         cmd.extend(["--framerate", str(framerate)])
+    if output_framerate is not None:
+        cmd.extend(["--output-framerate", str(output_framerate)])
     return cmd
 
 
@@ -384,13 +387,14 @@ def _run_test_job(
     framerate: float | None,
     timeout: float,
     source_folder: Path | None = None,
+    output_framerate: float | None = None,
 ) -> dict:
     """Run the first motion as a probe job.  Returns timing info for batch-size tuning."""
     first = motion_files[0]
     print(f"\n--- Running test job: {first.name} ---")
     rel_subdir = _resolve_rel_subdir(first, source_folder)
     config_path = write_source_config(first, source_type, output_dir, terrain_path, extra_options, rel_subdir)
-    cmd = _build_command(config_path, robot_config_path, output_dir, first.stem, framerate, rel_subdir)
+    cmd = _build_command(config_path, robot_config_path, output_dir, first.stem, framerate, output_framerate, rel_subdir)
     log_file = output_dir / "logs" / (f"{rel_subdir}/{first.stem}.log" if rel_subdir else f"{first.stem}.log")
 
     print(f"  Command: {' '.join(cmd)}")
@@ -447,12 +451,13 @@ def _run_one_motion(
     framerate: float | None,
     timeout: float,
     source_folder: Path | None = None,
+    output_framerate: float | None = None,
 ) -> dict:
     """Process a single motion file (called from worker processes)."""
     motion_stem = motion_file.stem
     rel_subdir = _resolve_rel_subdir(motion_file, source_folder)
     config_path = write_source_config(motion_file, source_type, output_dir, terrain_path, extra_options, rel_subdir)
-    cmd = _build_command(config_path, robot_config_path, output_dir, motion_stem, framerate, rel_subdir)
+    cmd = _build_command(config_path, robot_config_path, output_dir, motion_stem, framerate, output_framerate, rel_subdir)
     log_file = output_dir / "logs" / (f"{rel_subdir}/{motion_stem}.log" if rel_subdir else f"{motion_stem}.log")
     result = run_single_job(cmd, activation_prefix, log_file, timeout)
     result["motion_file"] = str(motion_file)
@@ -474,6 +479,7 @@ def process_batch(
     timeout: float = 3600,
     reserved_memory_ratio: float = 0.4,
     source_folder: Path | None = None,
+    output_framerate: float | None = None,
 ) -> list[dict]:
     """Process every motion file, returning per-file results.
 
@@ -492,6 +498,7 @@ def process_batch(
             remaining, source_type, robot_config_path, output_dir,
             activation_prefix, terrain_path, extra_options, framerate, timeout,
             source_folder=source_folder,
+            output_framerate=output_framerate,
         )
         results.append(test_result)
         if test_result["returncode"] != 0:
@@ -522,6 +529,7 @@ def process_batch(
                 motion_file, source_type, robot_config_path, output_dir,
                 activation_prefix, terrain_path, extra_options, framerate, timeout,
                 source_folder=source_folder,
+                output_framerate=output_framerate,
             )
             results.append(result)
             status = "TIMED OUT" if result.get("timed_out") else (
@@ -537,7 +545,8 @@ def process_batch(
                     _run_one_motion,
                     motion_file, source_type, robot_config_path, output_dir,
                     activation_prefix, terrain_path, extra_options, framerate, timeout,
-                    source_folder,
+                    source_folder=source_folder,
+                    output_framerate=output_framerate,
                 )
                 future_to_motion[future] = motion_file
 
@@ -616,6 +625,8 @@ def main() -> None:
                         help="Exclude files ending with this suffix (e.g. '_M.bvh' for mirrored files)")
     parser.add_argument("--resume", action="store_true",
                         help="Skip motions whose retargeted output already exists")
+    parser.add_argument("--output-framerate", type=float, default=None,
+                        help="Resample motion to this framerate before retargeting (e.g. 30 to downsample 120fps data)")
 
     args = parser.parse_args()
 
@@ -699,6 +710,7 @@ def main() -> None:
         timeout=args.timeout,
         reserved_memory_ratio=args.reserved_memory_ratio,
         source_folder=source_folder if args.recursive else None,
+        output_framerate=args.output_framerate,
     )
 
     failed = _summarize(results)

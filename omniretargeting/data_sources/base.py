@@ -8,6 +8,8 @@ from typing import Any, Iterator
 
 import numpy as np
 
+from omniretargeting.utils import linear_interpolate, slerp_interpolate
+
 
 @dataclass
 class MotionFrame:
@@ -65,6 +67,64 @@ class MotionData:
             self.source_height = self.human_height
         if self.human_height is None:
             self.human_height = self.source_height
+
+    def resample(self, target_framerate: float) -> MotionData:
+        """Return a new MotionData resampled to *target_framerate* via linear interpolation."""
+        if self.framerate is None or self.framerate <= 0:
+            raise ValueError("Cannot resample: source framerate is unknown.")
+        if target_framerate <= 0:
+            raise ValueError(f"target_framerate must be positive, got {target_framerate}")
+        if abs(target_framerate - self.framerate) < 1e-6:
+            return self
+
+        T = self.positions.shape[0]
+        duration = (T - 1) / self.framerate
+        T_new = max(int(round(duration * target_framerate)) + 1, 2)
+
+        dst_indices = np.linspace(0, T - 1, T_new)
+
+        new_positions = linear_interpolate(self.positions, dst_indices, axis=0)
+        new_root_orientations = slerp_interpolate(self.root_orientations, dst_indices, axis=0) if self.root_orientations is not None else None
+        new_root_translations = linear_interpolate(self.root_translations, dst_indices, axis=0) if self.root_translations is not None else None
+        new_object_points = linear_interpolate(self.object_points, dst_indices, axis=0) if self.object_points is not None else None
+
+        new_metadata = dict(self.metadata)
+        jo = new_metadata.get("joint_orientations")
+        if jo is not None and isinstance(jo, np.ndarray) and jo.shape[0] == T:
+            if jo.shape[-1] == 3:
+                new_metadata["joint_orientations"] = slerp_interpolate(jo, dst_indices, axis=0)
+            else:
+                new_metadata["joint_orientations"] = linear_interpolate(jo, dst_indices, axis=0)
+
+        for key in ("object_translations", "object_scales"):
+            val = new_metadata.get(key)
+            if val is not None and isinstance(val, np.ndarray) and val.shape[0] == T:
+                new_metadata[key] = linear_interpolate(val, dst_indices, axis=0)
+
+        obj_rot = new_metadata.get("object_rotations")
+        if obj_rot is not None and isinstance(obj_rot, np.ndarray) and obj_rot.shape[0] == T:
+            from scipy.spatial.transform import Rotation, Slerp
+            src_times = np.arange(T, dtype=np.float64)
+            dst_times = dst_indices
+            if obj_rot.ndim == 3 and obj_rot.shape[1:] == (3, 3):
+                rotations = Rotation.from_matrix(obj_rot)
+                slerp_fn = Slerp(src_times, rotations)
+                new_metadata["object_rotations"] = slerp_fn(dst_times).as_matrix()
+            else:
+                new_metadata["object_rotations"] = linear_interpolate(obj_rot, dst_indices, axis=0)
+
+        return MotionData(
+            positions=new_positions,
+            target_names=self.target_names,
+            root_orientations=new_root_orientations,
+            root_translations=new_root_translations,
+            framerate=target_framerate,
+            source_height=self.source_height,
+            human_height=self.human_height,
+            object_points=new_object_points,
+            object_mesh=self.object_mesh,
+            metadata=new_metadata,
+        )
 
     def iter_frames(self) -> Iterator[MotionFrame]:
         for frame_idx, positions in enumerate(self.positions):
