@@ -89,15 +89,15 @@ def slerp_interpolate(
     indices: np.ndarray,
     axis: int = 0,
 ) -> np.ndarray:
-    """Spherical linear interpolation for rotation arrays at fractional *indices*.
+    """Spherical linear interpolation for wxyz quaternion arrays at fractional *indices*.
 
     Parameters
     ----------
     array:
-        Array of axis-angle (rotation vector) data.  The last dimension
-        must be 3 and *axis* selects the time/sequence dimension.
-        E.g. shape ``(T, 3)`` for a single rotation track or
-        ``(T, J, 3)`` for *J* joints.
+        Array of wxyz quaternion data.  The last dimension must be 4
+        and *axis* selects the time/sequence dimension.  E.g. shape
+        ``(T, 4)`` for a single rotation track or ``(T, J, 4)`` for
+        *J* joints.
     indices:
         1-D array of float indices into *axis* (in ``[0, N-1]``).
     axis:
@@ -106,10 +106,10 @@ def slerp_interpolate(
     Returns
     -------
     np.ndarray
-        Rotation-vector array with ``array.shape[axis]`` replaced by
+        wxyz quaternion array with ``array.shape[axis]`` replaced by
         ``len(indices)``, same dtype.
     """
-    assert array.shape[-1] == 3, f"Last dimension must be 3 (axis-angle), got {array.shape[-1]}"
+    assert array.shape[-1] == 4, f"Last dimension must be 4 (wxyz quaternion), got {array.shape[-1]}"
     axis = axis % array.ndim
     n = array.shape[axis]
     indices = np.asarray(indices, dtype=np.float64)
@@ -118,8 +118,8 @@ def slerp_interpolate(
     hi = np.clip(lo + 1, 0, n - 1)
     frac = indices - lo
 
-    q0 = _rotvec_to_quat(np.take(array, lo, axis=axis))
-    q1 = _rotvec_to_quat(np.take(array, hi, axis=axis))
+    q0 = np.take(array, lo, axis=axis)
+    q1 = np.take(array, hi, axis=axis)
 
     # Shortest-path: flip q1 when dot < 0
     dot = np.sum(q0 * q1, axis=-1, keepdims=True)
@@ -146,7 +146,7 @@ def slerp_interpolate(
     result_quat = s0 * q0 + s1 * q1
     result_quat = result_quat / np.linalg.norm(result_quat, axis=-1, keepdims=True)
 
-    return _quat_to_rotvec(result_quat)
+    return result_quat
 
 
 def load_terrain_mesh(mesh_path: Path) -> trimesh.Trimesh:

@@ -490,12 +490,12 @@ def test_retarget_motion_skips_foot_stabilization_for_hard_constraint():
 def test_retarget_motion_uses_base_inputs_as_root_pose_arrays():
     from omniretargeting import OmniRetargeter
 
-    base_orientations = np.ones((1, 3), dtype=float)
+    base_orientations = np.tile(np.array([1.0, 0.0, 0.0, 0.0], dtype=float), (1, 1))
     base_translations = np.full((1, 3), 2.0, dtype=float)
     motion_data = MotionData(
         positions=np.zeros((1, 2, 3), dtype=float),
         target_names=["Pelvis", "Head"],
-        root_orientations=np.zeros((1, 3), dtype=float),
+        root_orientations=np.tile(np.array([1.0, 0.0, 0.0, 0.0], dtype=float), (1, 1)),
         root_translations=np.zeros((1, 3), dtype=float),
         framerate=30.0,
         metadata={"source_type": "test"},
@@ -536,8 +536,8 @@ def test_retarget_frame_uses_root_pose_for_frame_zero_init_when_present():
     from omniretargeting.core import RetargetingStreamState
     from omniretargeting import OmniRetargeter
 
-    estimated_quat_xyzw = np.array([0.1, 0.2, 0.3, 0.9], dtype=float)
-    estimated_quat_xyzw /= np.linalg.norm(estimated_quat_xyzw)
+    estimated_quat_wxyz = np.array([0.1, 0.2, 0.3, 0.9], dtype=float)
+    estimated_quat_wxyz /= np.linalg.norm(estimated_quat_wxyz)
     mapped_targets = np.arange(12, dtype=float).reshape(4, 3)
     q_result = np.arange(7, dtype=float)
 
@@ -545,7 +545,7 @@ def test_retarget_frame_uses_root_pose_for_frame_zero_init_when_present():
     inner_retargeter.retarget_frame.return_value = q_result
 
     retargeter = OmniRetargeter.__new__(OmniRetargeter)
-    retargeter._estimate_base_orientation_from_joints = Mock(return_value=estimated_quat_xyzw)
+    retargeter._estimate_base_orientation_from_joints = Mock(return_value=estimated_quat_wxyz)
     retargeter._extract_mapped_source_targets = Mock(return_value=mapped_targets)
 
     state = RetargetingStreamState(
@@ -558,7 +558,7 @@ def test_retarget_frame_uses_root_pose_for_frame_zero_init_when_present():
     )
 
     root_translation = np.array([1.0, 2.0, 3.0], dtype=float)
-    root_orientation = np.array([0.0, 0.0, np.pi / 2.0], dtype=float)
+    root_orientation = Rotation.from_rotvec([0.0, 0.0, np.pi / 2.0]).as_quat(scalar_first=True)
     frame = MotionFrame(
         positions=np.zeros((4, 3), dtype=float),
         root_orientation=root_orientation,
@@ -567,19 +567,8 @@ def test_retarget_frame_uses_root_pose_for_frame_zero_init_when_present():
 
     result = retargeter.retarget_frame(frame, state)
 
-    expected_init_xyzw = Rotation.from_rotvec(root_orientation).as_quat()
-    expected_init_wxyz = np.array([
-        expected_init_xyzw[3],
-        expected_init_xyzw[0],
-        expected_init_xyzw[1],
-        expected_init_xyzw[2],
-    ])
-    expected_target_wxyz = np.array([
-        estimated_quat_xyzw[3],
-        estimated_quat_xyzw[0],
-        estimated_quat_xyzw[1],
-        estimated_quat_xyzw[2],
-    ])
+    expected_init_wxyz = root_orientation
+    expected_target_wxyz = estimated_quat_wxyz
 
     call_args = inner_retargeter.retarget_frame.call_args
     np.testing.assert_array_equal(call_args.args[0], mapped_targets)
@@ -587,7 +576,7 @@ def test_retarget_frame_uses_root_pose_for_frame_zero_init_when_present():
     np.testing.assert_allclose(call_args.args[1][3:7], expected_init_wxyz)
     assert call_args.kwargs["q_last"] is None
     np.testing.assert_allclose(call_args.kwargs["target_base_orientation"], expected_target_wxyz)
-    np.testing.assert_allclose(state.last_estimated_quat, estimated_quat_xyzw)
+    np.testing.assert_allclose(state.last_estimated_quat, estimated_quat_wxyz)
     assert state.frame_idx == 1
     np.testing.assert_array_equal(state.q_init, q_result)
     np.testing.assert_array_equal(state.q_last, q_result)
@@ -598,8 +587,8 @@ def test_retarget_frame_falls_back_to_estimated_root_pose_when_absent():
     from omniretargeting.core import RetargetingStreamState
     from omniretargeting import OmniRetargeter
 
-    estimated_quat_xyzw = np.array([0.3, -0.2, 0.1, 0.9], dtype=float)
-    estimated_quat_xyzw /= np.linalg.norm(estimated_quat_xyzw)
+    estimated_quat_wxyz = np.array([0.3, -0.2, 0.1, 0.9], dtype=float)
+    estimated_quat_wxyz /= np.linalg.norm(estimated_quat_wxyz)
     positions = np.array(
         [[10.0, 11.0, 12.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         dtype=float,
@@ -612,14 +601,14 @@ def test_retarget_frame_falls_back_to_estimated_root_pose_when_absent():
     inner_retargeter.retarget_frame.return_value = q_result
 
     retargeter = OmniRetargeter.__new__(OmniRetargeter)
-    retargeter._estimate_base_orientation_from_joints = Mock(return_value=estimated_quat_xyzw)
+    retargeter._estimate_base_orientation_from_joints = Mock(return_value=estimated_quat_wxyz)
     retargeter._extract_mapped_source_targets = Mock(return_value=mapped_targets)
 
     state = RetargetingStreamState(
         retargeter=inner_retargeter,
         q_init=np.zeros(7, dtype=float),
         q_last=previous_q,
-        last_estimated_quat=np.array([0.0, 0.0, 0.0, 1.0], dtype=float),
+        last_estimated_quat=np.array([1.0, 0.0, 0.0, 0.0], dtype=float),
         frame_idx=0,
         scaled_terrain=Mock(),
     )
@@ -627,12 +616,7 @@ def test_retarget_frame_falls_back_to_estimated_root_pose_when_absent():
     frame = MotionFrame(positions=positions)
     result = retargeter.retarget_frame(frame, state)
 
-    expected_target_wxyz = np.array([
-        estimated_quat_xyzw[3],
-        estimated_quat_xyzw[0],
-        estimated_quat_xyzw[1],
-        estimated_quat_xyzw[2],
-    ])
+    expected_target_wxyz = estimated_quat_wxyz
 
     call_args = inner_retargeter.retarget_frame.call_args
     np.testing.assert_array_equal(call_args.args[0], mapped_targets)
@@ -640,7 +624,7 @@ def test_retarget_frame_falls_back_to_estimated_root_pose_when_absent():
     np.testing.assert_allclose(call_args.args[1][3:7], expected_target_wxyz)
     np.testing.assert_array_equal(call_args.kwargs["q_last"], previous_q)
     np.testing.assert_allclose(call_args.kwargs["target_base_orientation"], expected_target_wxyz)
-    np.testing.assert_allclose(state.last_estimated_quat, estimated_quat_xyzw)
+    np.testing.assert_allclose(state.last_estimated_quat, estimated_quat_wxyz)
     assert state.frame_idx == 1
     np.testing.assert_array_equal(state.q_init, q_result)
     np.testing.assert_array_equal(state.q_last, q_result)

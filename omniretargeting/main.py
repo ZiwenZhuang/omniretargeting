@@ -359,19 +359,9 @@ def main():
         
         # Extract components
         base_pos = retargeted_motion[:, :3]
-        base_quat = retargeted_motion[:, 3:7] # wxyz
+        base_quat = retargeted_motion[:, 3:7]  # wxyz (MuJoCo convention, consistent with entire pipeline)
         joint_pos = retargeted_motion[:, 7:]
-        
-        # Convert quaternion to xyzw if needed (standard for many tools)
-        # MuJoCo uses wxyz, but many other tools use xyzw.
-        # The example file has 'base_quat_w' which implies world frame.
-        # Let's assume the example file uses xyzw convention as it's common in ROS/scipy
-        # But wait, MuJoCo uses wxyz. Let's check the example file values if possible.
-        # For now, let's stick to wxyz as it is what MuJoCo uses and what we have.
-        # If the user wants xyzw, we can convert.
-        # Actually, let's look at the example file keys again:
-        # ['framerate', 'joint_names', 'joint_pos', 'base_pos_w', 'base_quat_w']
-        
+
         # Save as .npz with specific keys
         np.savez(
             args.output,
@@ -379,7 +369,7 @@ def main():
             joint_names=np.array(joint_names),
             joint_pos=joint_pos,
             base_pos_w=base_pos,
-            base_quat_w=base_quat # Saving as wxyz (MuJoCo convention)
+            base_quat_w=base_quat,  # wxyz quaternion
         )
         
         print(f"Done! Source-to-robot scale used: {source_to_robot_scale}")

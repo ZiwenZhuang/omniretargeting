@@ -48,9 +48,9 @@ class MotionData:
             raise ValueError("MotionData.target_names length must match positions.shape[1].")
         if self.root_orientations is not None and (
             self.root_orientations.shape[0] != self.positions.shape[0]
-            or self.root_orientations.shape[-1] != 3
+            or self.root_orientations.shape[-1] != 4
         ):
-            raise ValueError("MotionData.root_orientations must have shape (T, 3) when provided.")
+            raise ValueError("MotionData.root_orientations must have shape (T, 4) wxyz quaternion when provided.")
         if self.root_translations is not None and self.root_translations.shape != (self.positions.shape[0], 3):
             raise ValueError("MotionData.root_translations must have shape (T, 3) when provided.")
         if self.object_points is not None:
@@ -75,7 +75,18 @@ class MotionData:
         if target_framerate <= 0:
             raise ValueError(f"target_framerate must be positive, got {target_framerate}")
         if abs(target_framerate - self.framerate) < 1e-6:
-            return self
+            return MotionData(
+                positions=self.positions.copy(),
+                target_names=self.target_names,
+                root_orientations=self.root_orientations.copy() if self.root_orientations is not None else None,
+                root_translations=self.root_translations.copy() if self.root_translations is not None else None,
+                framerate=self.framerate,
+                source_height=self.source_height,
+                human_height=self.human_height,
+                object_points=self.object_points.copy() if self.object_points is not None else None,
+                object_mesh=self.object_mesh,
+                metadata=dict(self.metadata),
+            )
 
         T = self.positions.shape[0]
         duration = (T - 1) / self.framerate
@@ -91,10 +102,7 @@ class MotionData:
         new_metadata = dict(self.metadata)
         jo = new_metadata.get("joint_orientations")
         if jo is not None and isinstance(jo, np.ndarray) and jo.shape[0] == T:
-            if jo.shape[-1] == 3:
-                new_metadata["joint_orientations"] = slerp_interpolate(jo, dst_indices, axis=0)
-            else:
-                new_metadata["joint_orientations"] = linear_interpolate(jo, dst_indices, axis=0)
+            new_metadata["joint_orientations"] = slerp_interpolate(jo, dst_indices, axis=0)
 
         for key in ("object_translations", "object_scales"):
             val = new_metadata.get(key)

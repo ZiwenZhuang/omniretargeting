@@ -219,8 +219,7 @@ def _set_object_body_poses(model, data, object_body_names: list[str], object_tra
         transform = track.transforms[min(frame_idx, len(track.transforms) - 1)]
         rotation = transform[:3, :3]
         translation = transform[:3, 3]
-        quat_xyzw = Rotation.from_matrix(rotation).as_quat()
-        quat_wxyz = np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]], dtype=float)
+        quat_wxyz = Rotation.from_matrix(rotation).as_quat(scalar_first=True)
         data.qpos[qpos_adr:qpos_adr + 3] = translation
         data.qpos[qpos_adr + 3:qpos_adr + 7] = quat_wxyz
 
