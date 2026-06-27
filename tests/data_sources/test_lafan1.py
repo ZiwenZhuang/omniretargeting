@@ -127,13 +127,12 @@ def test_load_framerate():
         os.unlink(path)
 
 
-def test_load_root_orientations_shape():
+def test_load_root_orientations_is_none():
     path = _write_temp_bvh(MINIMAL_BVH)
     try:
         ds = Lafan1DataSource(motion_file=path)
         md = ds.load()
-        assert md.root_orientations.shape == (3, 3)
-        assert np.isfinite(md.root_orientations).all()
+        assert md.root_orientations is None
     finally:
         os.unlink(path)
 

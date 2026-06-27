@@ -389,10 +389,10 @@ class OmniRetargeter:
             right = -right
             rot = np.column_stack([forward, right, up])
 
-        quat_xyzw = Rotation.from_matrix(rot).as_quat()
-        if last_quat is not None and np.dot(quat_xyzw, last_quat) < 0:
-            quat_xyzw = -quat_xyzw
-        return quat_xyzw
+        quat_wxyz = Rotation.from_matrix(rot).as_quat(scalar_first=True)
+        if last_quat is not None and np.dot(quat_wxyz, last_quat) < 0:
+            quat_wxyz = -quat_wxyz
+        return quat_wxyz
 
     def retarget_frame(self, frame: MotionFrame | np.ndarray, state: RetargetingStreamState) -> np.ndarray:
         positions = frame.positions if isinstance(frame, MotionFrame) else frame
@@ -401,7 +401,7 @@ class OmniRetargeter:
         source_positions = positions
         q_init = state.q_init
 
-        estimated_quat_xyzw = self._estimate_base_orientation_from_joints(
+        estimated_quat_wxyz = self._estimate_base_orientation_from_joints(
             source_positions,
             state.last_estimated_quat,
         )
@@ -412,27 +412,16 @@ class OmniRetargeter:
             else:
                 q_init[:3] = source_positions[0]
             if root_orientation is not None:
-                quat_xyzw = Rotation.from_rotvec(root_orientation).as_quat()
-                q_init[3:7] = np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
-            elif estimated_quat_xyzw is not None:
-                q_init[3:7] = np.array([
-                    estimated_quat_xyzw[3],
-                    estimated_quat_xyzw[0],
-                    estimated_quat_xyzw[1],
-                    estimated_quat_xyzw[2],
-                ])
+                q_init[3:7] = root_orientation
+            elif estimated_quat_wxyz is not None:
+                q_init[3:7] = estimated_quat_wxyz
 
         mapped_source_targets = self._extract_mapped_source_targets(source_positions)
 
         target_quat_wxyz = None
-        if estimated_quat_xyzw is not None:
-            target_quat_wxyz = np.array([
-                estimated_quat_xyzw[3],
-                estimated_quat_xyzw[0],
-                estimated_quat_xyzw[1],
-                estimated_quat_xyzw[2],
-            ])
-            state.last_estimated_quat = estimated_quat_xyzw
+        if estimated_quat_wxyz is not None:
+            target_quat_wxyz = estimated_quat_wxyz
+            state.last_estimated_quat = estimated_quat_wxyz
 
         # Extract object points if present
         object_points = frame.object_points if isinstance(frame, MotionFrame) else None

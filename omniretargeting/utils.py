@@ -10,6 +10,145 @@ from scipy.spatial.transform import Rotation
 import mujoco
 
 
+def linear_interpolate(
+    array: np.ndarray,
+    indices: np.ndarray,
+    axis: int = 0,
+) -> np.ndarray:
+    """Linearly interpolate *array* at fractional *indices* along *axis*.
+
+    Parameters
+    ----------
+    array:
+        Source array of any shape.
+    indices:
+        1-D array of float indices into *axis* (must be in [0, N-1]
+        where N = array.shape[axis]).
+    axis:
+        The axis along which to interpolate.
+
+    Returns
+    -------
+    np.ndarray
+        Array whose shape equals ``array.shape`` with ``array.shape[axis]``
+        replaced by ``len(indices)``.
+    """
+    axis = axis % array.ndim
+    n = array.shape[axis]
+    indices = np.asarray(indices, dtype=np.float64)
+
+    lo = np.clip(np.floor(indices).astype(int), 0, n - 1)
+    hi = np.clip(lo + 1, 0, n - 1)
+    frac = indices - lo
+
+    # Reshape frac for broadcasting: length-M along *axis*, size-1 elsewhere.
+    shape = [1] * array.ndim
+    shape[axis] = len(indices)
+    frac = frac.reshape(shape)
+
+    return np.take(array, lo, axis=axis) * (1 - frac) + np.take(array, hi, axis=axis) * frac
+
+
+def _rotvec_to_quat(rotvec: np.ndarray) -> np.ndarray:
+    """Axis-angle (..., 3) -> quaternion (..., 4) in wxyz order."""
+    original_shape = rotvec.shape[:-1]
+    flat = rotvec.reshape(-1, 3)
+    angle = np.linalg.norm(flat, axis=-1, keepdims=True)
+    safe_angle = np.where(angle > 1e-10, angle, np.ones_like(angle))
+    axis_normed = flat / safe_angle
+    half = angle / 2
+    w = np.cos(half)
+    xyz = axis_normed * np.sin(half)
+    near_zero = (angle < 1e-10).squeeze(-1)
+    w[near_zero] = 1.0
+    xyz[near_zero] = 0.0
+    quat = np.concatenate([w, xyz], axis=-1)
+    return quat.reshape(*original_shape, 4)
+
+
+def _quat_to_rotvec(quat: np.ndarray) -> np.ndarray:
+    """Quaternion (..., 4) in wxyz order -> axis-angle (..., 3)."""
+    original_shape = quat.shape[:-1]
+    flat = quat.reshape(-1, 4)
+    flat = np.where(flat[:, :1] < 0, -flat, flat)
+    w = np.clip(flat[:, 0:1], -1.0, 1.0)
+    xyz = flat[:, 1:4]
+    half_angle = np.arccos(w)
+    angle = 2 * half_angle
+    sin_half = np.sin(half_angle)
+    safe_sin = np.where(sin_half > 1e-10, sin_half, np.ones_like(sin_half))
+    axis_normed = xyz / safe_sin
+    rotvec = axis_normed * angle
+    near_zero = (sin_half < 1e-10).squeeze(-1)
+    rotvec[near_zero] = 0.0
+    return rotvec.reshape(*original_shape, 3)
+
+
+def slerp_interpolate(
+    array: np.ndarray,
+    indices: np.ndarray,
+    axis: int = 0,
+) -> np.ndarray:
+    """Spherical linear interpolation for wxyz quaternion arrays at fractional *indices*.
+
+    Parameters
+    ----------
+    array:
+        Array of wxyz quaternion data.  The last dimension must be 4
+        and *axis* selects the time/sequence dimension.  E.g. shape
+        ``(T, 4)`` for a single rotation track or ``(T, J, 4)`` for
+        *J* joints.
+    indices:
+        1-D array of float indices into *axis* (in ``[0, N-1]``).
+    axis:
+        The axis along which to interpolate (the "time" axis).
+
+    Returns
+    -------
+    np.ndarray
+        wxyz quaternion array with ``array.shape[axis]`` replaced by
+        ``len(indices)``, same dtype.
+    """
+    assert array.shape[-1] == 4, f"Last dimension must be 4 (wxyz quaternion), got {array.shape[-1]}"
+    axis = axis % array.ndim
+    n = array.shape[axis]
+    indices = np.asarray(indices, dtype=np.float64)
+
+    lo = np.clip(np.floor(indices).astype(int), 0, n - 1)
+    hi = np.clip(lo + 1, 0, n - 1)
+    frac = indices - lo
+
+    q0 = np.take(array, lo, axis=axis)
+    q1 = np.take(array, hi, axis=axis)
+
+    # Shortest-path: flip q1 when dot < 0
+    dot = np.sum(q0 * q1, axis=-1, keepdims=True)
+    q1 = np.where(dot < 0, -q1, q1)
+    dot = np.abs(dot)
+
+    shape = [1] * q0.ndim
+    shape[axis] = len(indices)
+    frac = frac.reshape(shape)
+
+    dot = np.clip(dot, -1.0, 1.0)
+    theta = np.arccos(dot)
+    sin_theta = np.sin(theta)
+
+    near_parallel = (sin_theta < 1e-10)
+    safe_sin_theta = np.where(near_parallel, np.ones_like(sin_theta), sin_theta)
+
+    s0 = np.sin((1 - frac) * theta) / safe_sin_theta
+    s1 = np.sin(frac * theta) / safe_sin_theta
+
+    s0 = np.where(near_parallel, 1 - frac, s0)
+    s1 = np.where(near_parallel, frac, s1)
+
+    result_quat = s0 * q0 + s1 * q1
+    result_quat = result_quat / np.linalg.norm(result_quat, axis=-1, keepdims=True)
+
+    return result_quat
+
+
 def load_terrain_mesh(mesh_path: Path) -> trimesh.Trimesh:
     """Load terrain mesh from various formats."""
     supported_formats = ['.obj', '.stl', '.ply', '.gltf', '.glb']

@@ -189,9 +189,10 @@ class OmomoDataSource(DataSource):
             object_centroid_local = np.asarray(self.object_mesh.vertices, dtype=np.float32).mean(axis=0)
 
             # Correct root_orient from SMPLX T-pose frame to body-aligned frame
+            # and convert from axis-angle to wxyz quaternion at the boundary.
             if self.use_smplx_base_pose and root_orient is not None:
                 root_orient_mat = Rotation.from_rotvec(root_orient).as_matrix()
-                root_orient = Rotation.from_matrix(root_orient_mat @ _SMPLX_ROOT_OFFSET).as_rotvec()
+                root_orient = Rotation.from_matrix(root_orient_mat @ _SMPLX_ROOT_OFFSET).as_quat(scalar_first=True)
 
             self._motion_data = MotionData(
                 positions=positions,
@@ -205,7 +206,6 @@ class OmomoDataSource(DataSource):
                 metadata={
                     **self.metadata,
                     "joint_orientations": None,
-                    "raw_root_translations": raw_trans,
                     "object_translations": object_pose["translation"],
                     "object_rotations": object_pose["rotation"],
                     "object_scales": object_pose["scale"],

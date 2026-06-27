@@ -84,9 +84,10 @@ class SmplxDataSource(DataSource):
                 source_height = self.estimate_height_from_trajectory(positions, names)
             
             # Correct root_orient from SMPLX T-pose frame to body-aligned frame
+            # and convert from axis-angle to wxyz quaternion at the boundary.
             if self.use_smplx_base_pose and root_orient is not None:
                 root_orient_mat = Rotation.from_rotvec(root_orient).as_matrix()
-                root_orient = Rotation.from_matrix(root_orient_mat @ _SMPLX_ROOT_OFFSET).as_rotvec()
+                root_orient = Rotation.from_matrix(root_orient_mat @ _SMPLX_ROOT_OFFSET).as_quat(scalar_first=True)
             self._motion_data = MotionData(
                 positions=positions,
                 target_names=names,
