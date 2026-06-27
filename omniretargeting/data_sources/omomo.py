@@ -206,7 +206,6 @@ class OmomoDataSource(DataSource):
                 metadata={
                     **self.metadata,
                     "joint_orientations": None,
-                    "raw_root_translations": raw_trans,
                     "object_translations": object_pose["translation"],
                     "object_rotations": object_pose["rotation"],
                     "object_scales": object_pose["scale"],

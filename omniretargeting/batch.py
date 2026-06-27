@@ -47,10 +47,7 @@ def detect_resources() -> dict:
 
 def scan_source_folder(folder: Path, source_type: str, recursive: bool = False, exclude_suffix: str | None = None) -> list[Path]:
     """Return motion files in *folder* matching *source_type*, sorted by name."""
-    try:
-        exts = get_source_extensions(source_type)
-    except ValueError:
-        exts = [".npz", ".bvh"]  # fallback for unregistered source types
+    exts = get_source_extensions(source_type)
     files: list[Path] = []
     for ext in exts:
         pattern = f"**/*{ext}" if recursive else f"*{ext}"

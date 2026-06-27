@@ -294,6 +294,7 @@ def main():
             print(f"Using default framerate: {framerate}")
         else:
             print(f"Using framerate: {framerate}")
+        motion_data.framerate = framerate
 
         if args.output_framerate is not None:
             print(f"Resampling from {framerate}fps to {args.output_framerate}fps...")
