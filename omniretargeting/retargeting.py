@@ -720,6 +720,7 @@ class GenericInteractionRetargeter:
                 target_base_orientation=target_base_orientation,
                 object_points=object_points,
                 bone_targets=bone_targets,
+                root_translation=root_translation,
             )
 
             # Solver failure at this linearization point: an identical retry
