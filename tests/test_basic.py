@@ -438,7 +438,17 @@ class TestPenetrationSlack:
         with pytest.raises(ValueError, match="hard_bound"):
             GenericInteractionRetargeter(
                 Mock(), Mock(), Mock(), {"Pelvis": "pelvis"}, 1.0,
-                penetration_slack={"enabled": True, "soft_tolerance": 0.03, "hard_bound": 0.001},
+                hard_penetration_constraint=True,
+                penetration_slack={"soft_tolerance": 0.03, "hard_bound": 0.001},
+            )
+
+    def test_slack_requires_hard_penetration_constraint(self):
+        from omniretargeting.retargeting import GenericInteractionRetargeter
+
+        with pytest.raises(ValueError, match="requires hard_penetration_constraint"):
+            GenericInteractionRetargeter(
+                Mock(), Mock(), Mock(), {"Pelvis": "pelvis"}, 1.0,
+                penetration_slack={"soft_tolerance": 0.001},
             )
 
 
@@ -906,11 +916,11 @@ def test_create_stream_state_passes_hard_penetration_constraint():
         "collision_detection_threshold": 0.2,
         "terrain_sample_points": 123,
         "replace_cylinders_with_capsules": True,
-        "penetration_resolver": "xyz_nudge",
+        "penetration_resolver": "hard_constraint_slack",
         "laplacian_edge_weighting": "exponential",
         "laplacian_distance_decay": 15.0,
         "bone_direction": {"enabled": True, "chains": [["Pelvis", "A", "B"]]},
-        "penetration_slack": {"enabled": True},
+        "penetration_slack": {"soft_tolerance": 0.002, "hard_bound": 0.04, "slack_penalty": 5e4},
     }
     retargeter.valid_source_target_names = ["Pelvis"]
     retargeter.base_orientation_config = {}
@@ -931,13 +941,53 @@ def test_create_stream_state_passes_hard_penetration_constraint():
         terrain_sample_points=123,
         source_target_names=["Pelvis"],
         replace_cylinders_with_capsules=True,
-        hard_penetration_constraint=False,
+        hard_penetration_constraint=True,
         joint_regularization_boost=None,
         laplacian_edge_weighting="exponential",
         laplacian_distance_decay=15.0,
         bone_direction={"enabled": True, "chains": [["Pelvis", "A", "B"]]},
-        penetration_slack={"enabled": True},
+        penetration_slack={"soft_tolerance": 0.002, "hard_bound": 0.04, "slack_penalty": 5e4},
     )
+
+
+def test_create_stream_state_ignores_slack_params_for_non_slack_resolver():
+    from omniretargeting import OmniRetargeter
+    from unittest.mock import patch
+
+    retargeter = OmniRetargeter.__new__(OmniRetargeter)
+    retargeter.robot_model = Mock(nq=7, njnt=0)
+    retargeter.robot_data = Mock()
+    retargeter.valid_source_to_robot_link_mapping = {"Pelvis": "pelvis"}
+    retargeter.robot_height = 1.0
+    retargeter.retargeting_config = {
+        "penetration_resolver": "hard_constraint",
+        "penetration_slack": {"soft_tolerance": 0.002},
+    }
+    retargeter.valid_source_target_names = ["Pelvis"]
+    retargeter.base_orientation_config = {}
+
+    with patch("omniretargeting.retargeting.GenericInteractionRetargeter") as retargeter_cls:
+        retargeter_cls.return_value = Mock()
+        retargeter.create_stream_state(scaled_terrain=Mock())
+
+    assert retargeter_cls.call_args.kwargs["hard_penetration_constraint"] is True
+    assert retargeter_cls.call_args.kwargs["penetration_slack"] is None
+
+
+def test_create_stream_state_rejects_unknown_penetration_resolver():
+    from omniretargeting import OmniRetargeter
+
+    retargeter = OmniRetargeter.__new__(OmniRetargeter)
+    retargeter.robot_model = Mock(nq=7, njnt=0)
+    retargeter.robot_data = Mock()
+    retargeter.valid_source_to_robot_link_mapping = {"Pelvis": "pelvis"}
+    retargeter.robot_height = 1.0
+    retargeter.retargeting_config = {"penetration_resolver": "soft_constraint"}
+    retargeter.valid_source_target_names = ["Pelvis"]
+    retargeter.base_orientation_config = {}
+
+    with pytest.raises(ValueError, match="penetration_resolver"):
+        retargeter.create_stream_state(scaled_terrain=Mock())
 
 @pytest.mark.parametrize(("robot_name", "profile_path"), ROBOT_PROFILE_CASES)
 def test_tpose_retargeting_alignment(robot_name: str, profile_path: Path):

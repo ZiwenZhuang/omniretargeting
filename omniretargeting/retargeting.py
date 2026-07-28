@@ -213,10 +213,11 @@ class GenericInteractionRetargeter:
                 - lambda_bone (float, paper 0.1): refinement-stage bone weight
                 - warm_init (bool, default True): run the Eq. (2) pre-solve per frame
                 - warm_init_iters (int, default 3): warm-stage SQP iterations
-            penetration_slack: Optional dict enabling TopoRetarget-style slack
-                penetration handling (Eq. 8) instead of a single hard tolerance.
-                Keys:
-                - enabled (bool, default False)
+            penetration_slack: Optional dict of TopoRetarget slack parameters
+                (Eq. 8), used in place of the single hard penetration tolerance.
+                Providing this dict enables the slack mode, so it requires
+                hard_penetration_constraint=True (i.e. penetration_resolver
+                "hard_constraint_slack"). Keys:
                 - soft_tolerance (float, paper 0.001): tau, soft penetration margin
                 - hard_bound (float, paper 0.03): b, hard penetration backstop
                 - slack_penalty (float, paper 1e5): w_s, quadratic slack penalty
@@ -287,9 +288,17 @@ class GenericInteractionRetargeter:
                     "at least one chain must contain 3 or more targets."
                 )
 
-        # ---- Penetration slack config (TopoRetarget Eq. 8; default off) ----
+        # ---- Penetration slack parameters (TopoRetarget Eq. 8) ----
+        # Enabled by passing this dict (i.e. penetration_resolver ==
+        # "hard_constraint_slack"); it modifies how the hard-constraint
+        # penetration resolver builds its QP constraints.
+        if penetration_slack is not None and not self.hard_penetration_constraint:
+            raise ValueError(
+                "penetration_slack requires hard_penetration_constraint=True "
+                "(penetration_resolver 'hard_constraint_slack')."
+            )
         ps = penetration_slack or {}
-        self.penetration_slack_enabled = bool(ps.get("enabled", False))
+        self.penetration_slack_enabled = penetration_slack is not None
         self.penetration_soft_tolerance = float(ps.get("soft_tolerance", 1e-3))
         self.penetration_hard_bound = float(ps.get("hard_bound", 0.03))
         self.penetration_slack_penalty = float(ps.get("slack_penalty", 1e5))
