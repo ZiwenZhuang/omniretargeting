@@ -18,10 +18,123 @@ from .utils import (
     compute_mesh_height_at_point,
     transform_points_local_to_world,
     get_adjacency_list,
+    calculate_exponential_edge_weights,
     calculate_laplacian_coordinates,
     calculate_laplacian_matrix,
 )
 from .data_sources.base import validate_motion_positions
+
+
+def parse_bone_chains(
+    chains: List[List[str]],
+    source_target_names: List[str],
+) -> List[Tuple[int, int, int]]:
+    """Convert bone chains of source target names into adjacent bone-pair triples.
+
+    Each chain [t0, t1, t2, ...] defines bones (t0->t1), (t1->t2), ... along the
+    chain (TopoRetarget Sec. 3.2: bones follow the same limb/finger). Adjacent
+    bone pairs AB are consecutive bones, stored as index triples (a, b, c)
+    meaning bone k = (a->b) and bone l = (b->c). Chains of length 2 define a
+    bone but contribute no adjacent pair.
+
+    Args:
+        chains: List of chains, each a list of source target names.
+        source_target_names: Ordered mapped source target names.
+
+    Returns:
+        List of (a, b, c) index triples into the mapped target arrays.
+
+    Raises:
+        ValueError: If a chain has fewer than 2 targets or names an unmapped target.
+    """
+    index = {name: i for i, name in enumerate(source_target_names)}
+    triples: List[Tuple[int, int, int]] = []
+    for chain in chains:
+        if len(chain) < 2:
+            raise ValueError(f"bone_direction chain must list at least 2 targets, got {chain}")
+        for name in chain:
+            if name not in index:
+                raise ValueError(
+                    f"bone_direction chain target '{name}' is not a mapped source target. "
+                    f"Available targets: {source_target_names}"
+                )
+        idx = [index[name] for name in chain]
+        for i in range(len(idx) - 2):
+            triples.append((idx[i], idx[i + 1], idx[i + 2]))
+    return triples
+
+
+def compute_bone_direction_targets(
+    points: np.ndarray,
+    triples: List[Tuple[int, int, int]],
+    eps: float = 1e-8,
+) -> np.ndarray:
+    """Source-side relative bone directions (d_k - d_l) per adjacent bone triple.
+
+    d_k is the unit vector from keypoint a to keypoint b (TopoRetarget Eq. 1).
+    Directions are expressed in the world frame: source and robot world frames
+    are aligned by the retargeting pipeline, so relative directions are directly
+    comparable (the paper uses wrist-attached frames for the same purpose).
+
+    Args:
+        points: (N, 3) source target positions (mapped order).
+        triples: Adjacent bone triples (a, b, c) from parse_bone_chains.
+        eps: Lower bound for segment lengths when normalizing.
+
+    Returns:
+        (3 * len(triples),) stacked (d_k - d_l) vectors.
+    """
+    targets = np.zeros(3 * len(triples))
+    for p, (a, b, c) in enumerate(triples):
+        e_k = points[b] - points[a]
+        e_l = points[c] - points[b]
+        d_k = e_k / max(np.linalg.norm(e_k), eps)
+        d_l = e_l / max(np.linalg.norm(e_l), eps)
+        targets[3 * p: 3 * p + 3] = d_k - d_l
+    return targets
+
+
+def compute_bone_direction_residual_and_jacobian(
+    robot_points: np.ndarray,
+    J_V: np.ndarray,
+    triples: List[Tuple[int, int, int]],
+    targets: np.ndarray,
+    eps: float = 1e-8,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Robot-side bone-direction residual and its Jacobian w.r.t. dqa.
+
+    For bone (a->b) with segment e = p_b - p_a, L = ||e||, d = e / L:
+        dd/dq = (I - d d^T) / L @ (J_b - J_a)
+    For an adjacent pair (k, l) the residual is (d_k - d_l) - target and its
+    Jacobian is Jd_k - Jd_l, so residual(q + dq) ~= res + J @ dqa.
+
+    Args:
+        robot_points: (N, 3) current robot link point positions (mapped order).
+        J_V: (3N, nq_a) stacked translational Jacobians (same order).
+        triples: Adjacent bone triples (a, b, c).
+        targets: (3P,) source-side (d_k - d_l) from compute_bone_direction_targets.
+        eps: Lower bound for segment lengths when normalizing.
+
+    Returns:
+        (res, J): residual (3P,) and Jacobian (3P, nq_a).
+    """
+    n_pairs = len(triples)
+    res = np.zeros(3 * n_pairs)
+    J = np.zeros((3 * n_pairs, J_V.shape[1]))
+    eye3 = np.eye(3)
+    for p, (a, b, c) in enumerate(triples):
+        J_a, J_b, J_c = J_V[3 * a: 3 * a + 3], J_V[3 * b: 3 * b + 3], J_V[3 * c: 3 * c + 3]
+        e_k = robot_points[b] - robot_points[a]
+        e_l = robot_points[c] - robot_points[b]
+        L_k = max(np.linalg.norm(e_k), eps)
+        L_l = max(np.linalg.norm(e_l), eps)
+        d_k = e_k / L_k
+        d_l = e_l / L_l
+        Jd_k = (eye3 - np.outer(d_k, d_k)) / L_k @ (J_b - J_a)
+        Jd_l = (eye3 - np.outer(d_l, d_l)) / L_l @ (J_c - J_b)
+        res[3 * p: 3 * p + 3] = (d_k - d_l) - targets[3 * p: 3 * p + 3]
+        J[3 * p: 3 * p + 3] = Jd_k - Jd_l
+    return res, J
 
 
 class GenericInteractionRetargeter:
@@ -49,6 +162,10 @@ class GenericInteractionRetargeter:
         replace_cylinders_with_capsules: bool = False,
         hard_penetration_constraint: bool = False,
         joint_regularization_boost: Optional[Dict] = None,
+        laplacian_edge_weighting: str = "uniform",
+        laplacian_distance_decay: float = 30.0,
+        bone_direction: Optional[Dict] = None,
+        penetration_slack: Optional[Dict] = None,
     ):
         """Initialize the generic retargeter.
 
@@ -76,6 +193,33 @@ class GenericInteractionRetargeter:
             hard_penetration_constraint: If True, enforce penetration
                 constraints inside the optimizer. If False, skip them so
                 outer post-processing can handle contact correction.
+            laplacian_edge_weighting: Weighting scheme for the interaction-mesh
+                Laplacian edges. "uniform" (default) keeps the original
+                OmniRetarget behavior (every neighbor weighted equally).
+                "exponential" uses the distance-dependent weights from
+                TopoRetarget (arXiv:2606.16272, Eq. 5): w_ij ∝ exp(-kappa * d_ij),
+                computed once on the source configuration per frame and reused
+                for the robot-side Laplacian.
+            laplacian_distance_decay: Spatial decay factor kappa used when
+                laplacian_edge_weighting == "exponential" (paper uses 30 for
+                meter-scale data).
+            bone_direction: Optional dict enabling the TopoRetarget bone-direction
+                prior (Eq. 1-2, 8). Keys:
+                - enabled (bool, default False)
+                - chains (list of source-target-name chains, required when enabled;
+                  bones are consecutive pairs along each chain)
+                - lambda_warm (float, paper 1.0): warm-init bone weight
+                - lambda_smooth (float, paper 2.5): warm-init temporal weight
+                - lambda_bone (float, paper 0.1): refinement-stage bone weight
+                - warm_init (bool, default True): run the Eq. (2) pre-solve per frame
+                - warm_init_iters (int, default 3): warm-stage SQP iterations
+            penetration_slack: Optional dict enabling TopoRetarget-style slack
+                penetration handling (Eq. 8) instead of a single hard tolerance.
+                Keys:
+                - enabled (bool, default False)
+                - soft_tolerance (float, paper 0.001): tau, soft penetration margin
+                - hard_bound (float, paper 0.03): b, hard penetration backstop
+                - slack_penalty (float, paper 1e5): w_s, quadratic slack penalty
         """
         self.robot_model = robot_model
         self.robot_data = robot_data
@@ -83,6 +227,13 @@ class GenericInteractionRetargeter:
         self.robot_height = robot_height
         self.hard_penetration_constraint = hard_penetration_constraint
         self.joint_regularization_boost = joint_regularization_boost
+        if laplacian_edge_weighting not in ("uniform", "exponential"):
+            raise ValueError(
+                f"Unknown laplacian_edge_weighting '{laplacian_edge_weighting}'. "
+                "Expected 'uniform' or 'exponential'."
+            )
+        self.laplacian_edge_weighting = laplacian_edge_weighting
+        self.laplacian_distance_decay = float(laplacian_distance_decay)
 
         # ---- Parse target mapping (supports mixed string/dict values) ----
         # Extract link names and optional local-frame offsets for each source target.
@@ -112,7 +263,42 @@ class GenericInteractionRetargeter:
         else:
             # Fallback: use dictionary insertion order (Python 3.7+)
             self.source_target_names = list(joint_mapping.keys())
-        
+
+        # ---- Bone-direction prior config (TopoRetarget Eq. 1-2, 8; default off) ----
+        bd = bone_direction or {}
+        self.bone_direction_enabled = bool(bd.get("enabled", False))
+        self.bone_triples: List[Tuple[int, int, int]] = []
+        self.lambda_warm = float(bd.get("lambda_warm", 1.0))
+        self.lambda_smooth = float(bd.get("lambda_smooth", 2.5))
+        self.lambda_bone = float(bd.get("lambda_bone", 0.1))
+        self.bone_warm_init = bool(bd.get("warm_init", True))
+        self.bone_warm_init_iters = int(bd.get("warm_init_iters", 3))
+        if self.bone_direction_enabled:
+            chains = bd.get("chains")
+            if not chains:
+                raise ValueError(
+                    "bone_direction.enabled=True requires 'chains': a list of "
+                    "source-target-name chains defining bones along each limb."
+                )
+            self.bone_triples = parse_bone_chains(chains, self.source_target_names)
+            if not self.bone_triples:
+                raise ValueError(
+                    "bone_direction chains produced no adjacent bone pairs; "
+                    "at least one chain must contain 3 or more targets."
+                )
+
+        # ---- Penetration slack config (TopoRetarget Eq. 8; default off) ----
+        ps = penetration_slack or {}
+        self.penetration_slack_enabled = bool(ps.get("enabled", False))
+        self.penetration_soft_tolerance = float(ps.get("soft_tolerance", 1e-3))
+        self.penetration_hard_bound = float(ps.get("hard_bound", 0.03))
+        self.penetration_slack_penalty = float(ps.get("slack_penalty", 1e5))
+        if self.penetration_slack_enabled and self.penetration_hard_bound <= self.penetration_soft_tolerance:
+            raise ValueError(
+                f"penetration_slack.hard_bound ({self.penetration_hard_bound}) must be "
+                f"greater than soft_tolerance ({self.penetration_soft_tolerance})."
+            )
+
         # Validate that all mapped robot links exist.
         # This is a final safety check - fail fast if links are missing.
         self._validate_joint_mapping()
@@ -302,10 +488,28 @@ class GenericInteractionRetargeter:
         # Create adjacency list
         adj_list = get_adjacency_list(tetrahedra, len(vertices))
 
+        # Distance-dependent edge weights (TopoRetarget Eq. 5), computed once on
+        # the source configuration and reused for the robot-side Laplacian.
+        # None means uniform weighting (original OmniRetarget behavior).
+        if self.laplacian_edge_weighting == "exponential":
+            edge_weights = calculate_exponential_edge_weights(
+                vertices, adj_list, kappa=self.laplacian_distance_decay
+            )
+        else:
+            edge_weights = None
+
         # Calculate target Laplacian coordinates
-        # CRITICAL: Use uniform_weight=True to match the matrix computation in optimization
-        # This ensures target_laplacian and lap0 use the same weighting scheme
-        target_laplacian = calculate_laplacian_coordinates(vertices, adj_list, uniform_weight=True)
+        # CRITICAL: Use the same weighting scheme as the matrix computation in
+        # optimization so target_laplacian and lap0 stay consistent.
+        target_laplacian = calculate_laplacian_coordinates(
+            vertices, adj_list, uniform_weight=True, edge_weights=edge_weights
+        )
+
+        # Source-side relative bone directions (TopoRetarget Eq. 1), constant
+        # across the SQP iterations for this frame.
+        bone_targets = None
+        if self.bone_direction_enabled:
+            bone_targets = compute_bone_direction_targets(source_target_positions, self.bone_triples)
 
         # Perform optimization
         q_opt = self._optimize_configuration(
@@ -317,6 +521,8 @@ class GenericInteractionRetargeter:
             q_last=q_last,
             target_base_orientation=target_base_orientation,
             object_points=object_points,
+            edge_weights=edge_weights,
+            bone_targets=bone_targets,
         )
 
         return q_opt
@@ -331,6 +537,8 @@ class GenericInteractionRetargeter:
         q_last: Optional[np.ndarray] = None,
         target_base_orientation: Optional[np.ndarray] = None,
         object_points: Optional[np.ndarray] = None,
+        edge_weights: Optional[List[np.ndarray]] = None,
+        bone_targets: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """
         Optimize robot configuration using SQP with interaction mesh constraints.
@@ -342,11 +550,21 @@ class GenericInteractionRetargeter:
             terrain_points: Terrain contact points
             max_iter: Maximum iterations
             q_last: Configuration at previous time step (for smoothness)
+            edge_weights: Optional precomputed source-frame edge weights for the
+                Laplacian matrix (aligned with adj_list)
+            bone_targets: Optional source-side relative bone directions for the
+                bone-direction prior (from compute_bone_direction_targets)
 
         Returns:
             Optimized configuration
         """
         q = q_init.copy()
+
+        # Warm-init stage (TopoRetarget Eq. 2): refine the initial guess toward
+        # the source's relative bone directions before the main refinement.
+        if self.bone_direction_enabled and bone_targets is not None and self.bone_warm_init:
+            q = self._warm_init_bone_direction(q, bone_targets, q_last)
+
         last_cost = np.inf
         
         import sys
@@ -373,7 +591,7 @@ class GenericInteractionRetargeter:
         for iteration in range(max_iter):
             # Single optimization step
             q_new, cost = self._single_optimization_step(
-                q, target_laplacian, adj_list, terrain_points, q_last, target_base_orientation, object_points
+                q, target_laplacian, adj_list, terrain_points, q_last, target_base_orientation, object_points, edge_weights, bone_targets
             )
             
             if show_debug and iteration < 3:
@@ -395,6 +613,60 @@ class GenericInteractionRetargeter:
 
         return q
 
+    def _warm_init_bone_direction(
+        self,
+        q_init: np.ndarray,
+        bone_targets: np.ndarray,
+        q_last: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        """Warm-init SQP stage from TopoRetarget Eq. (2).
+
+        Refines the initial guess toward the source's relative bone directions:
+            min  lambda_warm * E_bone(q) + lambda_smooth * ||q - q_ref||^2
+        where q_ref is the previous frame's configuration (or q_init for the
+        first frame). Runs a small QP for ``bone_warm_init_iters`` iterations
+        and returns the refined configuration (input is not modified).
+        """
+        q = q_init.copy()
+        q_ref = q_last if q_last is not None else q_init
+        ref_a = q_ref[self.q_a_indices]
+
+        for _ in range(self.bone_warm_init_iters):
+            self.robot_data.qpos[:] = q
+            mujoco.mj_forward(self.robot_model, self.robot_data)
+            J_V, p_V, _ = self._compute_robot_jacobians(q)
+            robot_points = np.array([p_V[name] for name in self.source_target_names])
+            res, J = compute_bone_direction_residual_and_jacobian(
+                robot_points, J_V, self.bone_triples, bone_targets
+            )
+
+            q_a_current = q[self.q_a_indices]
+            dqa = cp.Variable(len(self.q_a_indices), name="dqa_warm")
+            constraints = [
+                dqa >= (self.q_a_lb - q_a_current),
+                dqa <= (self.q_a_ub - q_a_current),
+                cp.SOC(self.step_size, dqa),
+            ]
+            obj = self.lambda_warm * cp.sum_squares(res + cp.Constant(J) @ dqa)
+            obj += self.lambda_smooth * cp.sum_squares(dqa + q_a_current - ref_a)
+
+            problem = cp.Problem(cp.Minimize(obj), constraints)
+            try:
+                problem.solve(solver=cp.CLARABEL, verbose=False)
+            except Exception:
+                break
+            if problem.status not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE) or dqa.value is None:
+                break
+
+            q[self.q_a_indices] = q_a_current + dqa.value
+            # Keep the base quaternion a valid unit quaternion between iterations
+            quat = q[3:7]
+            norm = np.linalg.norm(quat)
+            if norm > 1e-12:
+                q[3:7] = quat / norm
+
+        return q
+
     def _single_optimization_step(
         self,
         q: np.ndarray,
@@ -404,6 +676,8 @@ class GenericInteractionRetargeter:
         q_last: Optional[np.ndarray] = None,
         target_base_orientation: Optional[np.ndarray] = None,
         object_points: Optional[np.ndarray] = None,
+        edge_weights: Optional[List[np.ndarray]] = None,
+        bone_targets: Optional[np.ndarray] = None,
     ) -> Tuple[np.ndarray, float]:
         """
         Single SQP optimization step.
@@ -414,6 +688,10 @@ class GenericInteractionRetargeter:
             adj_list: Mesh adjacency list
             terrain_points: Terrain contact points
             q_last: Configuration at previous time step (for smoothness)
+            edge_weights: Optional precomputed source-frame edge weights for the
+                Laplacian matrix (aligned with adj_list)
+            bone_targets: Optional source-side relative bone directions for the
+                bone-direction prior (from compute_bone_direction_targets)
 
         Returns:
             Tuple of (optimized_config, cost)
@@ -497,9 +775,10 @@ class GenericInteractionRetargeter:
         else:
             vertices = np.vstack([robot_points, all_env_points])
 
-        # CRITICAL: Use uniform_weight=True to match target_laplacian computation
-        # This ensures consistent Laplacian computation between target and current
-        L = calculate_laplacian_matrix(vertices, adj_list, uniform_weight=True)
+        # CRITICAL: Use the same weighting scheme as the target_laplacian
+        # computation (uniform by default, or the precomputed source-frame
+        # edge_weights) so target and current Laplacian stay consistent.
+        L = calculate_laplacian_matrix(vertices, adj_list, uniform_weight=True, edge_weights=edge_weights)
         if not sp.issparse(L):
             L = sp.csr_matrix(L)
 
@@ -562,8 +841,9 @@ class GenericInteractionRetargeter:
         ])
 
         # Non-penetration constraints (self-collision + terrain)
+        penetration_slack_vars: List[cp.Expression] = []
         if self.hard_penetration_constraint:
-            penetration_constraints = self._compute_penetration_constraints(q, dqa)
+            penetration_constraints, penetration_slack_vars = self._compute_penetration_constraints(q, dqa)
             constraints.extend(penetration_constraints)
 
         # Trust region
@@ -576,6 +856,14 @@ class GenericInteractionRetargeter:
         # Minimize: ||lap_var - target_lap_vec||^2
         # where lap_var = lap0_vec + J_L @ dqa (from constraint)
         obj = cp.sum_squares(cp.multiply(sqrt_w3, lap_var - target_lap_vec))
+
+        # Bone-direction prior (TopoRetarget Eq. 1, refinement-stage weight):
+        # keep relative directions of adjacent bones close to the source's.
+        if self.bone_direction_enabled and bone_targets is not None:
+            bone_res, bone_J = compute_bone_direction_residual_and_jacobian(
+                robot_points, J_V, self.bone_triples, bone_targets
+            )
+            obj += self.lambda_bone * cp.sum_squares(bone_res + cp.Constant(bone_J) @ dqa)
         
         # Joint regularization cost (keep joints near zero/neutral)
         # Matching original: Q_diag cost uses q_a_n_last (last optimized at current time step)
@@ -606,6 +894,12 @@ class GenericInteractionRetargeter:
         # Q_diag cost: ||sqrt(Q_diag) * (dqa + q_a_current)||^2
         # This matches original: cp.sum_squares(cp.multiply(np.sqrt(Qd), dqa + q_a_n_last))
         obj += cp.sum_squares(cp.multiply(np.sqrt(Q_diag_modified), dqa + q_a_current))
+
+        # Slack penalty for soft penetration handling (TopoRetarget Eq. 8): w_s/2 * sum(s_i^2)
+        if penetration_slack_vars:
+            obj += (self.penetration_slack_penalty / 2.0) * cp.sum_squares(
+                cp.hstack(penetration_slack_vars)
+            )
 
         # Smoothness cost (matching original implementation exactly)
         # CRITICAL FIX: Use previous frame's velocity, not current guess
@@ -645,11 +939,15 @@ class GenericInteractionRetargeter:
         show_solver_debug = hasattr(sys, '_omni_frame_count') and sys._omni_frame_count <= 5
         
         try:
-            problem.solve(solver=cp.CLARABEL, verbose=False)
+            first_solve_error = None
+            try:
+                problem.solve(solver=cp.CLARABEL, verbose=False)
+            except cp.error.SolverError as solve_error:
+                first_solve_error = solve_error
 
-            if problem.status not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
+            if first_solve_error is not None or problem.status not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
                 if show_solver_debug:
-                    print(f"    First solve failed: {problem.status}, trying without SOC...")
+                    print(f"    First solve failed: {first_solve_error or problem.status}, trying without SOC...")
                 # Fallback to simpler problem without trust region
                 constraints = [c for c in constraints if not isinstance(c, cp.constraints.second_order.SOC)]
                 problem = cp.Problem(cp.Minimize(obj), constraints)
@@ -1022,7 +1320,39 @@ class GenericInteractionRetargeter:
         # Project onto contact normal
         return nhat_BA_W @ Jc
 
-    def _compute_penetration_constraints(self, q: np.ndarray, dqa: cp.Variable) -> List[cp.Constraint]:
+    def _penetration_constraint_terms(
+        self,
+        Ja: np.ndarray,
+        dist: float,
+        dqa: cp.Variable,
+        slack_vars: List[cp.Expression],
+    ) -> List[cp.Constraint]:
+        """Linearized non-penetration constraint(s) for one queried contact pair.
+
+        Default (slack disabled): single hard constraint  phi >= -penetration_tolerance.
+
+        TopoRetarget slack mode (Eq. 8): hard backstop phi >= -b, soft tolerance
+        phi + s >= -tau with 0 <= s <= b - tau; the slack variable is appended to
+        ``slack_vars`` so the caller can add the w_s/2 * sum(s^2) objective term.
+        """
+        if not self.penetration_slack_enabled:
+            return [Ja @ dqa >= -dist - self.penetration_tolerance]
+
+        # Slack is parameterized as s = span * s_unit with s_unit in [0, 1] and
+        # span = b - tau. This is mathematically identical to optimizing s in
+        # meters, but avoids the ill-conditioned 5e4-scale quadratic on a
+        # variable bounded at 0.03 that stalls CLARABEL (InsufficientProgress).
+        span = self.penetration_hard_bound - self.penetration_soft_tolerance
+        s_unit = cp.Variable(1, name="pen_slack_unit")
+        slack_vars.append(span * s_unit)  # true slack s (meters) for the w_s/2*s^2 term
+        return [
+            Ja @ dqa >= -dist - self.penetration_hard_bound,
+            Ja @ dqa + span * s_unit[0] >= -dist - self.penetration_soft_tolerance,
+            s_unit >= 0,
+            s_unit <= 1,
+        ]
+
+    def _compute_penetration_constraints(self, q: np.ndarray, dqa: cp.Variable) -> Tuple[List[cp.Constraint], List[cp.Variable]]:
         """
         Compute penetration constraints for robot-robot and robot-terrain contacts.
 
@@ -1040,8 +1370,14 @@ class GenericInteractionRetargeter:
         collision pipeline cannot detect robot-terrain contacts.  We handle them
         analytically using the trimesh proximity query and the robot's
         translational Jacobian.
+
+        Returns:
+            (constraints, slack_vars): the cvxpy constraints and the true-slack
+            expressions (meters) created in TopoRetarget slack mode (empty when
+            disabled).
         """
         constraints = []
+        slack_vars: List[cp.Expression] = []
 
         # Ensure kinematics are current
         self.robot_data.qpos[:] = q
@@ -1071,20 +1407,19 @@ class GenericInteractionRetargeter:
                     g1, g2, self._geom_names[g1], self._geom_names[g2], fromto, dist
                 )
                 Ja = J_rel[self.q_a_indices]
-                rhs = -dist - self.penetration_tolerance
-                constraints.append(Ja @ dqa >= rhs)
+                constraints.extend(self._penetration_constraint_terms(Ja, dist, dqa, slack_vars))
 
         # ------------------------------------------------------------------
         # 2) Robot-terrain penetration constraints (via trimesh proximity)
         # ------------------------------------------------------------------
         constraints.extend(
-            self._compute_terrain_penetration_constraints(q, dqa, threshold)
+            self._compute_terrain_penetration_constraints(q, dqa, threshold, slack_vars)
         )
 
-        return constraints
+        return constraints, slack_vars
 
     def _compute_terrain_penetration_constraints(
-        self, q: np.ndarray, dqa: cp.Variable, threshold: float
+        self, q: np.ndarray, dqa: cp.Variable, threshold: float, slack_vars: List[cp.Expression]
     ) -> List[cp.Constraint]:
         """
         Compute non-penetration constraints between robot geoms and the
@@ -1111,7 +1446,9 @@ class GenericInteractionRetargeter:
         - n   is the outward terrain surface normal at the closest point,
         - J_a is the translational Jacobian of the geom's body at the sampled
           point (columns for the actuated DOFs only),
-        - tol is ``self.penetration_tolerance``.
+        - tol is ``self.penetration_tolerance`` (or the TopoRetarget soft/hard
+          slack bounds when ``penetration_slack`` is enabled; the created slack
+          variables are appended to ``slack_vars``).
         """
         import trimesh as _trimesh
 
@@ -1298,9 +1635,7 @@ class GenericInteractionRetargeter:
             J_n = face_normal @ J_full  # (nq,)
             Ja = J_n[self.q_a_indices]
 
-            # Constraint: J_a @ dqa >= -(signed_dist - tolerance)
-            rhs = -signed_dist - self.penetration_tolerance
-            constraints.append(Ja @ dqa >= rhs)
+            constraints.extend(self._penetration_constraint_terms(Ja, signed_dist, dqa, slack_vars))
 
         return constraints
 

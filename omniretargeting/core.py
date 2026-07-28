@@ -291,6 +291,10 @@ class OmniRetargeter:
             replace_cylinders_with_capsules=bool(self.retargeting_config.get("replace_cylinders_with_capsules", False)),
             hard_penetration_constraint=self.retargeting_config.get("penetration_resolver", "hard_constraint") == "hard_constraint",
             joint_regularization_boost=self.retargeting_config.get("joint_regularization_boost"),
+            laplacian_edge_weighting=self.retargeting_config.get("laplacian_edge_weighting", "uniform"),
+            laplacian_distance_decay=float(self.retargeting_config.get("laplacian_distance_decay", 30.0)),
+            bone_direction=self.retargeting_config.get("bone_direction"),
+            penetration_slack=self.retargeting_config.get("penetration_slack"),
         )
 
         q_init = np.zeros(self.robot_model.nq)
