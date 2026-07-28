@@ -235,6 +235,7 @@ class GenericInteractionRetargeter:
         laplacian_distance_decay: float = 30.0,
         bone_direction: Optional[Dict] = None,
         penetration_slack: Optional[Dict] = None,
+        base_position_tracking_weight: float = 0.0,
     ):
         """Initialize the generic retargeter.
 
@@ -371,6 +372,7 @@ class GenericInteractionRetargeter:
         self.penetration_soft_tolerance = float(ps.get("soft_tolerance", 1e-3))
         self.penetration_hard_bound = float(ps.get("hard_bound", 0.03))
         self.penetration_slack_penalty = float(ps.get("slack_penalty", 1e5))
+        self.base_position_tracking_weight = float(base_position_tracking_weight)
         if self.penetration_slack_enabled and self.penetration_hard_bound <= self.penetration_soft_tolerance:
             raise ValueError(
                 f"penetration_slack.hard_bound ({self.penetration_hard_bound}) must be "
@@ -587,6 +589,7 @@ class GenericInteractionRetargeter:
         q_last: Optional[np.ndarray] = None,
         target_base_orientation: Optional[np.ndarray] = None,
         object_points: Optional[np.ndarray] = None,
+        root_translation: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """
         Retarget a single frame of source target positions to robot motion.
@@ -597,6 +600,8 @@ class GenericInteractionRetargeter:
             max_iter: Maximum optimization iterations
             q_last: Configuration at previous time step (for smoothness)
             object_points: Optional object surface points (K, 3)
+            root_translation: Optional source root translation (3,) for base
+                position tracking.
 
         Returns:
             Optimized robot configuration
@@ -656,6 +661,7 @@ class GenericInteractionRetargeter:
             target_base_orientation=target_base_orientation,
             object_points=object_points,
             bone_targets=bone_targets,
+            root_translation=root_translation,
         )
 
         return q_opt
@@ -672,6 +678,7 @@ class GenericInteractionRetargeter:
         target_base_orientation: Optional[np.ndarray] = None,
         object_points: Optional[np.ndarray] = None,
         bone_targets: Optional[np.ndarray] = None,
+        root_translation: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """
         Optimize robot configuration using SQP with interaction mesh constraints.
@@ -686,6 +693,8 @@ class GenericInteractionRetargeter:
             q_last: Configuration at previous time step (for smoothness)
             bone_targets: Optional source-side relative bone directions for the
                 bone-direction prior (from compute_bone_direction_targets)
+            root_translation: Optional source root translation (3,) for base
+                position tracking.
 
         Returns:
             Optimized configuration
@@ -791,6 +800,7 @@ class GenericInteractionRetargeter:
         target_base_orientation: Optional[np.ndarray] = None,
         object_points: Optional[np.ndarray] = None,
         bone_targets: Optional[np.ndarray] = None,
+        root_translation: Optional[np.ndarray] = None,
     ) -> Tuple[np.ndarray, float]:
         """
         Single SQP optimization step.
@@ -808,6 +818,8 @@ class GenericInteractionRetargeter:
             q_last: Configuration at previous time step (for smoothness)
             bone_targets: Optional source-side relative bone directions for the
                 bone-direction prior (from compute_bone_direction_targets)
+            root_translation: Optional source root translation (3,) for base
+                position tracking.
 
         Returns:
             Tuple of (optimized_config, cost)
@@ -944,6 +956,24 @@ class GenericInteractionRetargeter:
                     P_diag_extra[qa_idx] += 2.0 * orientation_weight
                     c[qa_idx] += 2.0 * orientation_weight * diff
                     orient_terms.append((qa_idx, diff))
+
+        # Base position tracking cost: keep the floating-base x-y origin close
+        # to the source root translation when it is available. This compensates
+        # for the loss of global x-y anchoring that happens with distance-
+        # weighted Laplacian edges (TopoRetarget), where static terrain
+        # vertices receive very low weights. We intentionally skip Z so the
+        # optimizer can still respect the robot's leg kinematics and terrain
+        # penetration constraints.
+        if root_translation is not None and self.base_position_tracking_weight > 0.0:
+            w_pos = self.base_position_tracking_weight
+            for pos_idx in [0, 1]:
+                if pos_idx in self.q_a_indices:
+                    idx_in_qa = int(np.where(self.q_a_indices == pos_idx)[0][0])
+                    diff = float(q_a_current[idx_in_qa] - root_translation[pos_idx])
+                    # Add 2*w to the diagonal and 2*w*diff to the linear term
+                    # so the QP cost is w * (dqa[idx] + diff)^2.
+                    P_diag_extra[idx_in_qa] += 2.0 * w_pos
+                    c[idx_in_qa] += 2.0 * w_pos * diff
 
         P = P + sp.diags(P_diag_extra)
 

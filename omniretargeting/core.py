@@ -312,6 +312,9 @@ class OmniRetargeter:
                 if penetration_resolver == "hard_constraint_slack"
                 else None
             ),
+            base_position_tracking_weight=float(
+                self.retargeting_config.get("base_position_tracking_weight", 0.0)
+            ),
         )
 
         q_init = np.zeros(self.robot_model.nq)
@@ -462,6 +465,7 @@ class OmniRetargeter:
             q_last=state.q_last,
             target_base_orientation=target_quat_wxyz,
             object_points=object_points,
+            root_translation=root_translation,
         )
         state.q_init = q_opt
         state.q_last = q_opt

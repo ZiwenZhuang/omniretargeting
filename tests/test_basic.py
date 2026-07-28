@@ -958,6 +958,7 @@ def test_create_stream_state_passes_hard_penetration_constraint():
         laplacian_distance_decay=15.0,
         bone_direction={"enabled": True, "chains": [["Pelvis", "A", "B"]]},
         penetration_slack={"soft_tolerance": 0.002, "hard_bound": 0.04, "slack_penalty": 5e4},
+        base_position_tracking_weight=0.0,
     )
 
 
@@ -999,6 +1000,42 @@ def test_create_stream_state_rejects_unknown_penetration_resolver():
 
     with pytest.raises(ValueError, match="penetration_resolver"):
         retargeter.create_stream_state(scaled_terrain=Mock())
+
+
+def test_create_stream_state_passes_base_position_tracking_weight():
+    from omniretargeting import OmniRetargeter
+    from unittest.mock import patch
+
+    retargeter = OmniRetargeter.__new__(OmniRetargeter)
+    retargeter.robot_model = Mock(nq=7, njnt=0)
+    retargeter.robot_data = Mock()
+    retargeter.valid_source_to_robot_link_mapping = {"Pelvis": "pelvis"}
+    retargeter.robot_height = 1.0
+    retargeter.retargeting_config = {"base_position_tracking_weight": 42.0}
+    retargeter.valid_source_target_names = ["Pelvis"]
+    retargeter.base_orientation_config = {}
+
+    with patch("omniretargeting.retargeting.GenericInteractionRetargeter") as retargeter_cls:
+        retargeter_cls.return_value = Mock()
+        retargeter.create_stream_state(scaled_terrain=Mock())
+
+    assert retargeter_cls.call_args.kwargs["base_position_tracking_weight"] == 42.0
+
+
+def test_base_position_tracking_weight_default_is_zero():
+    from omniretargeting.retargeting import GenericInteractionRetargeter
+
+    retargeter = GenericInteractionRetargeter.__new__(GenericInteractionRetargeter)
+    retargeter.penetration_slack_enabled = False
+    retargeter.hard_penetration_constraint = False
+    retargeter.bone_direction_enabled = False
+    retargeter.Q_diag_modified = np.ones(10)
+    retargeter.q_a_indices = np.arange(10)
+    retargeter.q_a_lb = -np.ones(10) * 1e6
+    retargeter.q_a_ub = np.ones(10) * 1e6
+    retargeter.base_position_tracking_weight = 0.0
+
+    assert retargeter.base_position_tracking_weight == 0.0
 
 @pytest.mark.parametrize(("robot_name", "profile_path"), ROBOT_PROFILE_CASES)
 def test_tpose_retargeting_alignment(robot_name: str, profile_path: Path):

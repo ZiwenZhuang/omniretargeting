@@ -10,6 +10,23 @@
 
 ## Recent Changes (2026-07-28)
 
+### Base Position Tracking to Fix kengo Base Drift
+- Added a configurable base-position tracking cost that penalizes deviation of
+  the floating-base x-y origin from the scaled source root translation. This
+  directly fixes the base drift seen with distance-weighted Laplacian edges
+  (TopoRetarget exponential weighting), where terrain vertices receive low
+  weights and no longer anchor the global x-y position.
+- New retargeting config key: `base_position_tracking_weight` (default `0.0`,
+  i.e. unchanged original behavior). The cost is added to the per-frame QP as
+  `w * ||q[:2] - root_translation[:2]||^2` whenever the DataSource provides
+  `root_translation` and `w > 0`. Z is intentionally left free so the optimizer
+  can still respect robot leg kinematics and terrain constraints.
+- Plumb `root_translation` from `MotionFrame` through `core.py::retarget_frame`,
+  `retargeting.py::retarget_frame`, `_optimize_configuration`, and
+  `_single_optimization_step`.
+- kengo.json (desktop) enables the cost with `base_position_tracking_weight: 100.0`.
+- Added unit tests for config propagation and default weight.
+
 ### Retargeting Speed-Up: Direct CLARABEL QP + Terrain Prefilter (~7x)
 
 Profiled kengo + LAFAN1 (`aiming1_subject1`, simplelab terrain): 245.7 ms/frame,
