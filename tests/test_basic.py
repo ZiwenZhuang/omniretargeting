@@ -811,6 +811,7 @@ def test_retarget_frame_uses_root_pose_for_frame_zero_init_when_present():
     inner_retargeter.retarget_frame.return_value = q_result
 
     retargeter = OmniRetargeter.__new__(OmniRetargeter)
+    retargeter.retargeting_config = {}
     retargeter._estimate_base_orientation_from_joints = Mock(return_value=estimated_quat_wxyz)
     retargeter._extract_mapped_source_targets = Mock(return_value=mapped_targets)
 
@@ -867,6 +868,7 @@ def test_retarget_frame_falls_back_to_estimated_root_pose_when_absent():
     inner_retargeter.retarget_frame.return_value = q_result
 
     retargeter = OmniRetargeter.__new__(OmniRetargeter)
+    retargeter.retargeting_config = {}
     retargeter._estimate_base_orientation_from_joints = Mock(return_value=estimated_quat_wxyz)
     retargeter._extract_mapped_source_targets = Mock(return_value=mapped_targets)
 
@@ -1073,7 +1075,16 @@ def test_tpose_retargeting_alignment(robot_name: str, profile_path: Path):
         print(f"T-Pose Retargeting Test ({robot_name})")
         print("="*60)
         
-        retargeter = OmniRetargeter(**_build_retargeter_kwargs(robot_config, terrain_path, joint_mapping))
+        # The synthetic trajectory uses the full 22-joint SMPLX layout, so declare
+        # the full skeleton as source_target_names (production gets these from the
+        # DataSource). Otherwise source_target_names falls back to the mapped
+        # subset, mapped indices point at the wrong joints, and base_orientation
+        # cannot find Spine1 (the robot maps its waist to Spine2, not Spine1).
+        from omniretargeting.data_sources.smplx import DEFAULT_SMPLX_TARGET_NAMES
+
+        retargeter_kwargs = _build_retargeter_kwargs(robot_config, terrain_path, joint_mapping)
+        retargeter_kwargs["source_target_names"] = list(DEFAULT_SMPLX_TARGET_NAMES)
+        retargeter = OmniRetargeter(**retargeter_kwargs)
         assert sorted(retargeter.validate_joint_mapping()) == []
         
         print(f"Input SMPLX trajectory shape: {source_positions.shape}")
@@ -1105,25 +1116,27 @@ def test_tpose_retargeting_alignment(robot_name: str, profile_path: Path):
         # Get robot link positions for mapped joints
         robot_positions = []
         target_positions = []
-        
-        for smplx_name, robot_link_name in joint_mapping.items():
+        checked_joints = []
+
+        for smplx_name, mapping_value in joint_mapping.items():
+            # Profile target_mapping values may be dicts: {"robot_link": ..., "offset": ...}
+            robot_link_name = mapping_value["robot_link"] if isinstance(mapping_value, dict) else mapping_value
+
             # Get SMPLX joint index
             smplx_idx = retargeter.source_target_indices.get(smplx_name)
             if smplx_idx is None:
                 continue
-            
+
+            # Get robot link position (mj_name2id returns -1 for unknown bodies)
+            body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, robot_link_name)
+            if body_id < 0:
+                continue
+
             # Get target position (scaled)
             target_pos = source_positions[0, smplx_idx] * source_to_robot_scale
             target_positions.append(target_pos)
-            
-            # Get robot link position
-            try:
-                body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, robot_link_name)
-                robot_pos = data.xpos[body_id].copy()
-                robot_positions.append(robot_pos)
-            except Exception as e:
-                print(f"Warning: Could not get position for {robot_link_name}: {e}")
-                continue
+            robot_positions.append(data.xpos[body_id].copy())
+            checked_joints.append((smplx_name, robot_link_name))
         
         robot_positions = np.array(robot_positions)
         target_positions = np.array(target_positions)
@@ -1141,9 +1154,8 @@ def test_tpose_retargeting_alignment(robot_name: str, profile_path: Path):
         print(f"Max distance: {max_distance:.4f} m")
         print(f"Min distance: {distances.min():.4f} m")
         print("\nPer-joint distances:")
-        for i, (smplx_name, robot_link_name) in enumerate(joint_mapping.items()):
-            if i < len(distances):
-                print(f"  {smplx_name:12s} -> {robot_link_name:25s}: {distances[i]:.4f} m")
+        for i, (smplx_name, robot_link_name) in enumerate(checked_joints):
+            print(f"  {smplx_name:12s} -> {robot_link_name:25s}: {distances[i]:.4f} m")
         print("-"*60)
         
         # Test assertion: mean distance should be < 1.0m for now
