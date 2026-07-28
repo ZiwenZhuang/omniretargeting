@@ -402,35 +402,44 @@ class TestPenetrationSlack:
         return r
 
     def test_hard_only_constraint_by_default(self):
-        import cvxpy as cp
-
         r = self._bare_retargeter()
-        dqa = cp.Variable(1)
-        slack_vars = []
-        terms = r._penetration_constraint_terms(np.array([1.0]), 0.005, dqa, slack_vars)
+        hard_rows, slack_row = r._penetration_constraint_terms(np.array([1.0]), 0.005)
 
-        assert len(terms) == 1
-        assert slack_vars == []
+        assert len(hard_rows) == 1
+        assert slack_row is None
 
     def test_slack_allows_soft_violation_within_hard_bound(self):
-        import cvxpy as cp
+        from scipy import sparse as sp
+        from omniretargeting.retargeting import _solve_qp_clarabel
 
         r = self._bare_retargeter(penetration_slack_enabled=True)
-        dqa = cp.Variable(1)
-        slack_vars = []
         # 5 mm existing penetration: soft tolerance (1 mm) must be violated,
         # but the hard bound (30 mm) must still hold.
-        terms = r._penetration_constraint_terms(np.array([1.0]), -0.005, dqa, slack_vars)
+        hard_rows, slack_row = r._penetration_constraint_terms(np.array([1.0]), -0.005)
 
-        assert len(slack_vars) == 1
-        s = slack_vars[0]
-        obj = (r.penetration_slack_penalty / 2.0) * cp.sum_squares(cp.hstack(slack_vars))
-        problem = cp.Problem(cp.Minimize(obj), terms + [dqa == 0.0])
-        problem.solve(solver=cp.CLARABEL)
+        assert len(hard_rows) == 1
+        assert slack_row is not None
+        Ja, rhs_soft, span = slack_row
+
+        # Recreate the QP row the retargeter builds for this pair, with dqa
+        # pinned at 0: min (w_s/2)(span*s_unit)^2
+        #   s.t. Ja*dqa + span*s_unit >= rhs_soft, Ja*dqa >= rhs_hard, 0<=s_unit<=1
+        w_s = r.penetration_slack_penalty
+        P = sp.csr_matrix(np.diag([0.0, w_s * span ** 2]))
+        c = np.zeros(2)
+        lb = np.array([0.0, 0.0])  # dqa pinned at 0 via bounds
+        ub = np.array([0.0, 1.0])
+        ge_rows = [
+            (np.array([Ja[0], span]), rhs_soft),
+            (np.array([Ja[0], 0.0]), hard_rows[0][1]),
+        ]
+        x, ok = _solve_qp_clarabel(P, c, lb, ub, ge_rows)
+        assert ok
+        s = span * x[1]
 
         # Soft violation exactly compensated: phi + s = -tau -> s = 0.005 - 0.001
-        np.testing.assert_allclose(s.value, [0.004], rtol=1e-4)
-        assert np.all(np.asarray(s.value) <= 0.03 - 0.001 + 1e-9)
+        np.testing.assert_allclose(s, 0.004, rtol=1e-4)
+        assert s <= 0.03 - 0.001 + 1e-9
 
     def test_hard_bound_must_exceed_soft_tolerance(self):
         from omniretargeting.retargeting import GenericInteractionRetargeter

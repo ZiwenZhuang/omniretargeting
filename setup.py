@@ -20,7 +20,7 @@ setup(
         "viser",
         "robot_descriptions",
         "yourdfpy",
-        "cvxpy",
+        "clarabel",
         "libigl",
         "tyro",
         "imageio[ffmpeg]",

@@ -23,7 +23,7 @@ dependencies = [
     "viser",
     "robot_descriptions",
     "yourdfpy",
-    "cvxpy",
+    "clarabel",
     "libigl",
     "tyro",
     # Additional dependencies for generic mesh processing
