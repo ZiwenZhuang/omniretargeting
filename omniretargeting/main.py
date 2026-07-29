@@ -137,7 +137,7 @@ def main():
                         help="Resample motion to this framerate before retargeting (e.g. 30 to downsample 120fps data)")
     parser.add_argument("--replace-cylinders-with-capsules", dest="replace_cylinders_with_capsules", action="store_true", default=False,
                         help="Legacy flag to replace cylinder collision geoms with capsules to match IsaacLab/PhysX convention.")
-    parser.add_argument("--penetration-resolver", choices=["hard_constraint", "xyz_nudge"], default=None,
+    parser.add_argument("--penetration-resolver", choices=["hard_constraint", "hard_constraint_slack", "xyz_nudge"], default=None,
                         help="Legacy override the contact handling mode for retargeting.")
 
     args = parser.parse_args()

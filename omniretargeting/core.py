@@ -279,6 +279,19 @@ class OmniRetargeter:
         if scaled_terrain is None:
             scaled_terrain = self.terrain_mesh.copy()
 
+        # Penetration handling mode:
+        # - "hard_constraint": non-penetration as QP constraints (single tolerance)
+        # - "hard_constraint_slack": QP constraints with TopoRetarget slack
+        #   variables (soft tolerance + hard backstop, see penetration_slack)
+        # - "xyz_nudge": skip QP constraints; batch post-processing corrects contact
+        penetration_resolver = self.retargeting_config.get("penetration_resolver", "hard_constraint")
+        valid_resolvers = ("hard_constraint", "hard_constraint_slack", "xyz_nudge")
+        if penetration_resolver not in valid_resolvers:
+            raise ValueError(
+                f"Unknown penetration_resolver '{penetration_resolver}'. "
+                f"Expected one of {valid_resolvers}."
+            )
+
         retargeter = GenericInteractionRetargeter(
             self.robot_model,
             self.robot_data,
@@ -289,8 +302,19 @@ class OmniRetargeter:
             terrain_sample_points=int(self.retargeting_config.get("terrain_sample_points", 100)),
             source_target_names=self.valid_source_target_names,
             replace_cylinders_with_capsules=bool(self.retargeting_config.get("replace_cylinders_with_capsules", False)),
-            hard_penetration_constraint=self.retargeting_config.get("penetration_resolver", "hard_constraint") == "hard_constraint",
+            hard_penetration_constraint=penetration_resolver in ("hard_constraint", "hard_constraint_slack"),
             joint_regularization_boost=self.retargeting_config.get("joint_regularization_boost"),
+            laplacian_edge_weighting=self.retargeting_config.get("laplacian_edge_weighting", "uniform"),
+            laplacian_distance_decay=float(self.retargeting_config.get("laplacian_distance_decay", 30.0)),
+            bone_direction=self.retargeting_config.get("bone_direction"),
+            penetration_slack=(
+                self.retargeting_config.get("penetration_slack")
+                if penetration_resolver == "hard_constraint_slack"
+                else None
+            ),
+            base_position_tracking_weight=float(
+                self.retargeting_config.get("base_position_tracking_weight", 0.0)
+            ),
         )
 
         q_init = np.zeros(self.robot_model.nq)
@@ -441,6 +465,7 @@ class OmniRetargeter:
             q_last=state.q_last,
             target_base_orientation=target_quat_wxyz,
             object_points=object_points,
+            root_translation=root_translation,
         )
         state.q_init = q_opt
         state.q_last = q_opt

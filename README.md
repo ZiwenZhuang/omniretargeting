@@ -517,7 +517,7 @@ Declared in `pyproject.toml` / `setup.py`:
 - trimesh, smplx, jinja2
 - mujoco (≥3.7 for URDF `strippath=false` default)
 - viser, yourdfpy, robot_descriptions
-- cvxpy, libigl, tyro
+- clarabel, libigl, tyro
 - open3d, pyvista
 
 ## Architecture

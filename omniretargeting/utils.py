@@ -334,7 +334,50 @@ def get_adjacency_list(tetrahedra, num_vertices):
     return [list(s) for s in adj]
 
 
-def calculate_laplacian_coordinates(vertices, adj_list, epsilon=1e-6, uniform_weight=True):
+def calculate_exponential_edge_weights(
+    vertices: np.ndarray,
+    adj_list: list[list[int]],
+    kappa: float = 30.0,
+):
+    """
+    Distance-dependent adjacency weights from TopoRetarget (arXiv:2606.16272), Eq. (5).
+
+    For each edge (i, j): w_tilde_ij = exp(-kappa * ||v_i - v_j||), then
+    row-normalized so that sum_j w_ij = 1 for every vertex i.
+
+    Per the paper, these weights are computed once on the *source* configuration
+    and reused unchanged for the robot-side Laplacian computation.
+
+    Args:
+        vertices (np.ndarray): (N, 3) array of source vertex positions.
+        adj_list (list of lists): Adjacency list for the mesh.
+        kappa (float): Spatial decay factor (paper uses 30 for meter-scale data).
+
+    Returns:
+        list of np.ndarray: edge_weights[i] holds the normalized weights for the
+            neighbors of vertex i, aligned with the order of adj_list[i].
+    """
+    edge_weights = []
+    for i in range(len(vertices)):
+        neighbors_indices = adj_list[i]
+        if len(neighbors_indices) > 0:
+            neighbor_positions = vertices[neighbors_indices]
+            distances = np.linalg.norm(vertices[i] - neighbor_positions, axis=1)
+            weights = np.exp(-kappa * distances)
+            weights = weights / np.sum(weights)
+            edge_weights.append(weights)
+        else:
+            edge_weights.append(np.zeros(0))
+    return edge_weights
+
+
+def calculate_laplacian_coordinates(
+    vertices: np.ndarray,
+    adj_list: list[list[int]],
+    epsilon: float = 1e-6,
+    uniform_weight: bool = True,
+    edge_weights: list[np.ndarray] | None = None,
+):
     """
     Calculates the Laplacian coordinates for each vertex in the mesh.
 
@@ -343,6 +386,9 @@ def calculate_laplacian_coordinates(vertices, adj_list, epsilon=1e-6, uniform_we
         adj_list (list of lists): Adjacency list for the mesh.
         epsilon (float): Small value to prevent division by zero.
         uniform_weight (bool): Whether to use uniform weights.
+        edge_weights (list of np.ndarray, optional): Precomputed per-edge weights
+            (e.g. from calculate_exponential_edge_weights), aligned with adj_list.
+            Overrides uniform_weight when provided.
 
     Returns:
         np.ndarray: (N, 3) array of Laplacian coordinates.
@@ -354,11 +400,13 @@ def calculate_laplacian_coordinates(vertices, adj_list, epsilon=1e-6, uniform_we
         if len(neighbors_indices) > 0:
             vi = vertices[i]
             neighbor_positions = vertices[neighbors_indices]
-            distances = np.linalg.norm(vi - neighbor_positions, axis=1)
 
-            if uniform_weight:
-                weights = np.ones_like(distances)
+            if edge_weights is not None:
+                weights = edge_weights[i]
+            elif uniform_weight:
+                weights = np.ones_like(neighbor_positions[:, 0])
             else:
+                distances = np.linalg.norm(vi - neighbor_positions, axis=1)
                 weights = 1.0 / (1.5 * distances + epsilon)
 
             sum_of_weights = np.sum(weights)
@@ -369,7 +417,13 @@ def calculate_laplacian_coordinates(vertices, adj_list, epsilon=1e-6, uniform_we
     return laplacian
 
 
-def calculate_laplacian_matrix(vertices, adj_list, epsilon=1e-6, uniform_weight=True):
+def calculate_laplacian_matrix(
+    vertices: np.ndarray,
+    adj_list: list[list[int]],
+    epsilon: float = 1e-6,
+    uniform_weight: bool = True,
+    edge_weights: list[np.ndarray] | None = None,
+):
     """
     Calculates the Laplacian matrix for the mesh with optional weight schemes.
 
@@ -378,6 +432,9 @@ def calculate_laplacian_matrix(vertices, adj_list, epsilon=1e-6, uniform_weight=
         adj_list (list of lists): Adjacency list for the mesh.
         epsilon (float): Small value to prevent division by zero.
         uniform_weight (bool): If True, use uniform weights; if False, use distance-based weights.
+        edge_weights (list of np.ndarray, optional): Precomputed per-edge weights
+            (e.g. from calculate_exponential_edge_weights), aligned with adj_list.
+            Overrides uniform_weight when provided.
 
     Returns:
         np.ndarray: (N, N) Laplacian matrix.
@@ -388,7 +445,9 @@ def calculate_laplacian_matrix(vertices, adj_list, epsilon=1e-6, uniform_weight=
     for i in range(N):
         neighbors_indices = adj_list[i]
         if len(neighbors_indices) > 0:
-            if uniform_weight:
+            if edge_weights is not None:
+                weights = edge_weights[i]
+            elif uniform_weight:
                 weights = np.ones(len(neighbors_indices)) / len(neighbors_indices)
             else:
                 vi = vertices[i]
