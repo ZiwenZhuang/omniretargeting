@@ -210,27 +210,58 @@ class SmplxDataSource(DataSource):
             use_pca=False,
         )
 
+        # Raw SMPL-X npz uses ``body_pose``/``global_orient``/``transl``; the
+        # SMPL-H/AMASS format uses ``pose_body``/``root_orient``/``trans``.
+        # Accept both key sets.
+        def _arr(*names: str) -> np.ndarray | None:
+            for name in names:
+                if name in motion:
+                    return np.asarray(motion[name], dtype=np.float32)
+            return None
+
+        body_pose_arr = _arr("pose_body", "body_pose")
+        root_orient = _arr("root_orient", "global_orient")
+        trans = _arr("trans", "transl")
+        if body_pose_arr is None or root_orient is None or trans is None:
+            missing = [
+                name for name, arr in (
+                    ("pose_body/body_pose", body_pose_arr),
+                    ("root_orient/global_orient", root_orient),
+                    ("trans/transl", trans),
+                ) if arr is None
+            ]
+            raise KeyError(f"SMPL-X npz missing pose keys: {missing}")
+
         if self.betas is None:
-            betas_tensor = torch.tensor(motion["betas"]).float().view(1, -1)
+            betas_arr = _arr("betas")
+            if betas_arr is None:
+                betas_arr = np.zeros((1, 10), dtype=np.float32)
+            if betas_arr.ndim == 2 and betas_arr.shape[0] > 1:
+                betas_arr = betas_arr[0]  # per-frame betas: use the first frame
+            betas_tensor = torch.tensor(betas_arr).float().view(1, -1)
         else:
             betas_tensor = torch.tensor([self.betas]).float()
         if betas_tensor.shape[1] > 10:
             betas_tensor = betas_tensor[:, :10]
 
-        num_frames = motion["pose_body"].shape[0]
-        root_orient = motion["root_orient"]
-        trans = motion["trans"]
+        num_frames = body_pose_arr.shape[0]
+
+        def _pose(arr: np.ndarray | None, dims: int) -> torch.Tensor:
+            if arr is not None and arr.shape[0] == num_frames:
+                return torch.tensor(arr).float()
+            return torch.zeros(num_frames, dims).float()
+
         output = body_model(
             betas=betas_tensor,
             global_orient=torch.tensor(root_orient).float(),
-            body_pose=torch.tensor(motion["pose_body"]).float(),
+            body_pose=torch.tensor(body_pose_arr).float(),
             transl=torch.tensor(trans).float(),
-            left_hand_pose=torch.zeros(num_frames, 45).float(),
-            right_hand_pose=torch.zeros(num_frames, 45).float(),
-            jaw_pose=torch.zeros(num_frames, 3).float(),
-            leye_pose=torch.zeros(num_frames, 3).float(),
-            reye_pose=torch.zeros(num_frames, 3).float(),
-            expression=torch.zeros(num_frames, 10).float(),
+            left_hand_pose=_pose(_arr("left_hand_pose"), 45),
+            right_hand_pose=_pose(_arr("right_hand_pose"), 45),
+            jaw_pose=_pose(_arr("jaw_pose"), 3),
+            leye_pose=_pose(_arr("leye_pose"), 3),
+            reye_pose=_pose(_arr("reye_pose"), 3),
+            expression=_pose(_arr("expression"), 10),
             return_full_pose=True,
         )
 
