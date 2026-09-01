@@ -346,8 +346,6 @@ def _build_command(
         # Uniform scale: motions scale with one shared factor and the scaled
         # terrain is exported once at the batch level, not per motion.
         cmd.extend(["--scale-factor", str(scale_factor)])
-    else:
-        cmd.extend(["--output-scaled-terrain", str(motion_dir / f"{motion_stem}_scaled_terrain.obj")])
     if save_video:
         cmd.extend(["--save-video", str(motion_dir / f"{motion_stem}_retargeted.mp4")])
     if framerate is not None:
