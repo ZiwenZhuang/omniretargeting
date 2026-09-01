@@ -283,11 +283,12 @@ def log_repo_status(output_dir: Path, robot_config_path: str | None = None) -> N
     print(f"Repository status saved to {git_status_dir}")
 
 
-def get_repo_info(repo_path: str | None = None) -> dict:
+def get_repo_info(repo_path: str | None = None, remote: str = "origin") -> dict:
     """Return ``{repo_url, repo_commit, repo_dirty}`` for a git repository.
 
     Structured counterpart of :func:`_git_status`, used for provenance
-    metadata. Fields are None when they cannot be determined.
+    metadata. Fields are None when they cannot be determined. ``remote`` names
+    the git remote whose URL is recorded as ``repo_url``.
     """
     repo_path = repo_path or str(REPO_ROOT)
     info: dict = {"repo_url": None, "repo_commit": None, "repo_dirty": None}
@@ -300,7 +301,7 @@ def get_repo_info(repo_path: str | None = None) -> dict:
             info["repo_commit"] = r.stdout.strip() or None
 
         r = subprocess.run(
-            ["git", "-C", repo_path, "remote", "get-url", "origin"],
+            ["git", "-C", repo_path, "remote", "get-url", remote],
             capture_output=True, text=True, timeout=10,
         )
         if r.returncode == 0:
