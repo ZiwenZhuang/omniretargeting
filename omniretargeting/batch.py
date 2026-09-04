@@ -2,7 +2,7 @@
 Batch processing script for OmniRetargeting.
 
 Scans a folder of motion files, writes per-motion source configs,
-and executes main.py for each file with scaled terrain and video export.
+and executes main.py for each file with optional fixed scaling and video export.
 
 Usage:
     python -m omniretargeting.batch \
@@ -69,7 +69,8 @@ def main() -> None:
     parser.add_argument("--scale-factor", type=float, default=None,
                         help="Force one source-to-robot scale factor for every motion "
                              "(instead of per-motion height estimates), so all motions and "
-                             "their scaled terrains stay consistent.")
+                             "their terrain stay consistent. The scaled terrain is saved "
+                             "once under OUTPUT_DIR/terrain/.")
 
     args = parser.parse_args()
 
@@ -122,8 +123,7 @@ def main() -> None:
 
     # Resume: skip motions whose retargeted output already exists
     if args.resume:
-        source_root = source_folder if args.recursive else None
-        completed = [f for f in motion_files if _output_exists(f, output_dir, source_root)]
+        completed = [f for f in motion_files if _output_exists(f, output_dir)]
         if completed:
             print(f"Resume: skipping {len(completed)} already-processed motion(s)")
         completed_set = set(completed)
