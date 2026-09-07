@@ -1793,35 +1793,25 @@ class GenericInteractionRetargeter:
         )
 
         for k, gi in enumerate(all_geom_info):
-            # Signed distance: positive when above terrain.
-            # closest_pts[k] is on the terrain surface; query_pt is the
-            # point on the geom surface. We define "above" as the direction
-            # of the terrain face normal.
+            # Signed distance: positive when the point is on the outside of
+            # the terrain surface, negative when it has penetrated the surface.
+            # The terrain mesh is consistently wound, so its face normals already
+            # point outward; penetration is therefore measured along the surface
+            # normal, not forced to +Z.
             query_pt = all_points[k]
             surface_pt = closest_pts[k]
 
             # Face normal from terrain mesh
             raw_face_normal = self.terrain_mesh.face_normals[tri_ids[k]]
             face_normal = raw_face_normal.copy()
-            # Ensure normal points "outward" (upward for typical terrains)
-            if face_normal[2] < 0:
-                face_normal = -face_normal
 
-            # Signed distance along the normal
+            # Signed distance along the outward surface normal.
             signed_dist = np.dot(query_pt - surface_pt, face_normal)
 
-            # A non-watertight terrain mesh has no globally defined inside.
-            # Deep signed distance is meaningful for upward-facing support
-            # surfaces, but the winding of a distant vertical face must not
-            # turn an entire half-space into an obstacle.  Walls and downward
-            # faces therefore remain local proximity constraints.
-            upward_support_face = raw_face_normal[2] >= 0.35
-            if unsigned_dists[k] > threshold and not (
-                upward_support_face and signed_dist <= threshold
-            ):
-                continue
-
-            # Only constrain points that are close to or below the surface
+            # Only constrain points that are close to or below the surface.
+            # Deep signed penetrations are retained for every face orientation
+            # so an initially buried geom cannot be hidden by an
+            # unsigned-distance prefilter.
             if signed_dist > threshold:
                 continue
 

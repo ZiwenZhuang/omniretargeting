@@ -768,6 +768,60 @@ def test_nonlinear_feasibility_is_checked_on_integrated_candidate():
     assert retargeter.last_solve_diagnostics["failure_reason"] is None
 
 
+def test_penetration_is_measured_along_surface_normal_for_steep_faces():
+    import mujoco
+
+    from omniretargeting.retargeting import GenericInteractionRetargeter
+
+    model = mujoco.MjModel.from_xml_string(
+        """
+        <mujoco>
+          <worldbody>
+            <body name="base" pos="0 0 0.5">
+              <freejoint/>
+              <geom name="base_geom" type="sphere" size="0.05"/>
+            </body>
+          </worldbody>
+        </mujoco>
+        """
+    )
+    data = mujoco.MjData(model)
+    # A vertical wall in the y-z plane whose outward normal points +x. Its
+    # raw face normal is not upward, so penetration must still be measured
+    # along the surface normal.
+    terrain = trimesh.Trimesh(
+        vertices=np.array(
+            [
+                [0.0, -1.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 1.0, 1.0],
+                [0.0, -1.0, 1.0],
+            ]
+        ),
+        faces=np.array([[0, 1, 2], [0, 2, 3]]),
+        process=False,
+    )
+    retargeter = GenericInteractionRetargeter(
+        model,
+        data,
+        terrain,
+        {"Base": "base"},
+        0.1,
+        source_target_names=["Base"],
+        terrain_sample_points=4,
+        hard_penetration_constraint=True,
+        solver_diagnostics=True,
+    )
+
+    q_behind = model.qpos0.copy()
+    q_behind[0] = -0.3
+    q_front = model.qpos0.copy()
+    q_front[0] = 0.3
+
+    assert retargeter._nonlinear_penetration_violation(q_behind) > 0.0
+    assert retargeter._nonlinear_penetration_violation(q_front) == 0.0
+
+
 def test_nonlinear_step_rejection_is_reported_when_no_step_accepted():
     import mujoco
     from scipy import sparse as sp
