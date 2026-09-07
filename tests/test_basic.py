@@ -460,6 +460,358 @@ class TestPenetrationSlack:
                 penetration_slack={"soft_tolerance": 0.001},
             )
 
+    @pytest.mark.parametrize(
+        ("penetration_slack", "message"),
+        [
+            ([], "dictionary"),
+            ({"soft_tolerance": -0.001}, "non-negative"),
+            ({"hard_bound": np.nan}, "finite"),
+            ({"slack_penalty": 0.0}, "positive"),
+        ],
+    )
+    def test_invalid_slack_parameters_are_rejected(self, penetration_slack, message):
+        from omniretargeting.retargeting import GenericInteractionRetargeter
+
+        with pytest.raises(ValueError, match=message):
+            GenericInteractionRetargeter(
+                Mock(),
+                Mock(),
+                Mock(),
+                {"Pelvis": "pelvis"},
+                1.0,
+                hard_penetration_constraint=True,
+                penetration_slack=penetration_slack,
+            )
+
+
+def _make_tangent_test_retargeter(**kwargs):
+    import mujoco
+
+    from omniretargeting.retargeting import GenericInteractionRetargeter
+
+    model = mujoco.MjModel.from_xml_string(
+        """
+        <mujoco>
+          <compiler angle="radian"/>
+          <worldbody>
+            <body name="base" pos="0 0 1.0">
+              <freejoint/>
+              <geom name="base_geom" type="sphere" size="0.05" contype="0" conaffinity="0"/>
+              <body name="thigh">
+                <joint name="hip" type="hinge" axis="0 1 0" range="-2 2"/>
+                <geom name="thigh_geom" type="capsule" fromto="0 0 0 0 0 -0.5" size="0.04"/>
+                <body name="shin" pos="0 0 -0.5">
+                  <joint name="knee" type="hinge" axis="0 1 0" range="-2 2"/>
+                  <geom name="shin_geom" type="capsule" fromto="0 0 0 0 0 -0.5" size="0.04"/>
+                  <body name="foot" pos="0 0 -0.5">
+                    <joint name="ankle" type="hinge" axis="0 1 0" range="-1 1"/>
+                    <geom name="foot_geom" type="box" pos="0.15 0 -0.04" size="0.2 0.08 0.04"/>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </worldbody>
+        </mujoco>
+        """
+    )
+    data = mujoco.MjData(model)
+    terrain = trimesh.Trimesh(
+        vertices=np.array(
+            [[-2.0, -2.0, 0.0], [2.0, -2.0, 0.0], [2.0, 2.0, 0.0], [-2.0, 2.0, 0.0]]
+        ),
+        faces=np.array([[0, 1, 2], [0, 2, 3]]),
+        process=False,
+    )
+    retargeter = GenericInteractionRetargeter(
+        model,
+        data,
+        terrain,
+        {"Foot": "foot"},
+        1.0,
+        terrain_sample_points=4,
+        source_target_names=["Foot"],
+        **kwargs,
+    )
+    return retargeter, model, data
+
+
+@pytest.mark.parametrize(
+    ("penetration_correction", "message"),
+    [
+        ({"base_translation_weights": [1.0, 2.0]}, "contain 3"),
+        ({"base_rotation_weight": np.inf}, "finite"),
+        ({"joint_weight": -1.0}, "non-negative"),
+        ({"base_translation_step": [0.1, 0.0, 0.1]}, "positive"),
+        ({"joint_step_fraction": 0.0}, "positive"),
+        ({"restoration_penalty": 0.0}, "positive"),
+    ],
+)
+def test_invalid_penetration_correction_is_rejected(
+    penetration_correction, message
+):
+    with pytest.raises(ValueError, match=message):
+        _make_tangent_test_retargeter(
+            penetration_correction=penetration_correction
+        )
+
+
+def _set_tangent_test_pose(model, q):
+    import mujoco
+
+    for name, value in (("hip", 0.45), ("knee", -0.75), ("ankle", 0.35)):
+        joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+        q[model.jnt_qposadr[joint_id]] = value
+
+
+def test_mujoco_tangent_jacobian_matches_integrated_point_displacement():
+    import mujoco
+
+    retargeter, model, data = _make_tangent_test_retargeter()
+    q = model.qpos0.copy()
+    _set_tangent_test_pose(model, q)
+    data.qpos[:] = q
+    mujoco.mj_forward(model, data)
+
+    foot_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "foot")
+    point_body = np.array([0.2, 0.0, -0.04])
+    point_before = data.xpos[foot_id] + data.xmat[foot_id].reshape(3, 3) @ point_body
+    jacobian = retargeter._calc_contact_jacobian_from_point(foot_id, point_body)
+    delta_v = np.linspace(-1.0, 1.0, retargeter.nv_a) * 1e-7
+    q_new = retargeter._integrate_optimized_step(q, delta_v)
+
+    data.qpos[:] = q_new
+    mujoco.mj_forward(model, data)
+    point_after = data.xpos[foot_id] + data.xmat[foot_id].reshape(3, 3) @ point_body
+
+    np.testing.assert_allclose(
+        point_after - point_before,
+        jacobian[:, retargeter.dof_indices] @ delta_v,
+        atol=1e-12,
+        rtol=1e-5,
+    )
+    np.testing.assert_allclose(
+        retargeter._configuration_residual(q, q_new),
+        delta_v,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(np.linalg.norm(q_new[3:7]), 1.0, atol=1e-12)
+
+
+def test_bent_leg_terrain_jacobian_has_base_and_joint_support():
+    import mujoco
+
+    retargeter, model, data = _make_tangent_test_retargeter()
+    q = model.qpos0.copy()
+    _set_tangent_test_pose(model, q)
+    data.qpos[:] = q
+    mujoco.mj_forward(model, data)
+
+    foot_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "foot")
+    jacobian_z = retargeter._calc_contact_jacobian_from_point(
+        foot_id, np.array([0.2, 0.0, -0.04])
+    )[2, retargeter.dof_indices]
+
+    base_z = retargeter.base_translation_opt_indices[2]
+    np.testing.assert_allclose(jacobian_z[base_z], 1.0, atol=1e-12)
+    for name in ("hip", "knee", "ankle"):
+        joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+        opt_idx = retargeter._dof_to_opt[int(model.jnt_dofadr[joint_id])]
+        assert abs(jacobian_z[opt_idx]) > 1e-3
+
+
+def test_scaled_correction_metric_prefers_articulation_to_base_motion():
+    import mujoco
+    from scipy import sparse as sp
+
+    from omniretargeting.retargeting import _solve_qp_clarabel
+
+    retargeter, model, data = _make_tangent_test_retargeter(
+        penetration_correction={
+            "base_translation_weights": [1000.0, 1000.0, 1000.0],
+            "base_rotation_weight": 1000.0,
+            "joint_weight": 0.01,
+        }
+    )
+    q = model.qpos0.copy()
+    _set_tangent_test_pose(model, q)
+    data.qpos[:] = q
+    mujoco.mj_forward(model, data)
+
+    foot_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "foot")
+    jacobian_z = retargeter._calc_contact_jacobian_from_point(
+        foot_id, np.array([0.2, 0.0, -0.04])
+    )[2, retargeter.dof_indices]
+
+    metric = np.maximum(retargeter.joint_regularization_diag.copy(), 1e-6)
+    metric[retargeter.base_translation_opt_indices] = retargeter.base_translation_weights
+    metric[retargeter.base_rotation_opt_indices] = retargeter.base_rotation_weight
+    lb, ub = retargeter._step_bounds(q)
+    delta_v, ok = _solve_qp_clarabel(
+        sp.diags(2.0 * metric),
+        np.zeros(retargeter.nv_a),
+        lb,
+        ub,
+        [(jacobian_z, 0.02)],
+    )
+
+    assert ok
+    assert jacobian_z @ delta_v >= 0.02 - 1e-7
+    joint_indices = (
+        retargeter.dof_group_indices["legs"]
+        + retargeter.dof_group_indices["waist"]
+        + retargeter.dof_group_indices["arms"]
+        + retargeter.dof_group_indices["other_joints"]
+    )
+    joint_norm = np.linalg.norm(delta_v[joint_indices])
+    base_norm = np.linalg.norm(
+        delta_v[
+            retargeter.base_translation_opt_indices
+            + retargeter.base_rotation_opt_indices
+        ]
+    )
+    assert joint_norm > 10.0 * base_norm
+
+
+def test_tangent_step_bounds_respect_physical_joint_limits():
+    import mujoco
+
+    retargeter, model, _ = _make_tangent_test_retargeter()
+    q = model.qpos0.copy()
+    hip_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "hip")
+    hip_qpos = int(model.jnt_qposadr[hip_id])
+    hip_opt = retargeter._dof_to_opt[int(model.jnt_dofadr[hip_id])]
+    q[hip_qpos] = 1.99
+
+    lb, ub = retargeter._step_bounds(q)
+
+    np.testing.assert_allclose(ub[hip_opt], 0.01, atol=1e-12)
+    np.testing.assert_allclose(lb[hip_opt], -0.4, atol=1e-12)
+
+
+def test_relative_contact_jacobian_cancels_rigid_base_translation():
+    import mujoco
+
+    retargeter, model, data = _make_tangent_test_retargeter()
+    q = model.qpos0.copy()
+    _set_tangent_test_pose(model, q)
+    data.qpos[:] = q
+    mujoco.mj_forward(model, data)
+
+    thigh_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "thigh")
+    foot_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "foot")
+    relative = retargeter._calc_contact_jacobian_from_point(
+        thigh_id
+    ) - retargeter._calc_contact_jacobian_from_point(foot_id)
+    np.testing.assert_allclose(relative[:, :3], 0.0, atol=1e-12)
+
+
+def test_nonlinear_feasibility_is_checked_on_integrated_candidate():
+    import mujoco
+    from scipy import sparse as sp
+
+    from omniretargeting.retargeting import GenericInteractionRetargeter
+
+    model = mujoco.MjModel.from_xml_string(
+        """
+        <mujoco>
+          <worldbody>
+            <body name="base" pos="0 0 0.04">
+              <freejoint/>
+              <geom name="base_geom" type="sphere" size="0.05"/>
+            </body>
+          </worldbody>
+        </mujoco>
+        """
+    )
+    data = mujoco.MjData(model)
+    terrain = trimesh.Trimesh(
+        vertices=np.array(
+            [[-2.0, -2.0, 0.0], [2.0, -2.0, 0.0], [2.0, 2.0, 0.0], [-2.0, 2.0, 0.0]]
+        ),
+        faces=np.array([[0, 1, 2], [0, 2, 3]]),
+        process=False,
+    )
+    retargeter = GenericInteractionRetargeter(
+        model,
+        data,
+        terrain,
+        {"Base": "base"},
+        0.1,
+        source_target_names=["Base"],
+        terrain_sample_points=4,
+        hard_penetration_constraint=True,
+        solver_diagnostics=True,
+    )
+    q_bad = model.qpos0.copy()
+    q_deep = q_bad.copy()
+    q_deep[2] -= 0.5
+    delta_v = np.zeros(retargeter.nv_a)
+    delta_v[retargeter.base_translation_opt_indices[2]] = 0.02
+    q_good = retargeter._integrate_optimized_step(q_bad, delta_v)
+    assert retargeter._nonlinear_penetration_violation(q_bad) > 0.0
+    assert retargeter._nonlinear_penetration_violation(q_deep) > 0.4
+    assert retargeter._nonlinear_penetration_violation(q_good) == 0.0
+
+    retargeter._single_optimization_step = Mock(return_value=(q_good, 0.0))
+    result = retargeter._optimize_configuration(
+        q_bad,
+        np.zeros((1, 3)),
+        sp.csr_matrix((1, 1)),
+        sp.csr_matrix((3, 3)),
+        np.zeros((0, 3)),
+        max_iter=1,
+    )
+
+    np.testing.assert_allclose(result, q_good)
+    assert retargeter.last_solve_diagnostics["success"] is True
+    assert retargeter.last_solve_diagnostics["max_hard_violation"] == 0.0
+    assert retargeter.last_solve_diagnostics["failure_reason"] is None
+
+
+@pytest.mark.parametrize(
+    ("geom_type", "size"),
+    [
+        ("cylinder", np.array([0.2, 0.4, 0.0])),
+        ("capsule", np.array([0.2, 0.4, 0.0])),
+        ("ellipsoid", np.array([0.2, 0.3, 0.4])),
+    ],
+)
+def test_primitive_samples_use_mujoco_local_geometry(geom_type, size):
+    import mujoco
+
+    from omniretargeting.utils import sample_mujoco_geom_local_points
+
+    enum = {
+        "cylinder": mujoco.mjtGeom.mjGEOM_CYLINDER,
+        "capsule": mujoco.mjtGeom.mjGEOM_CAPSULE,
+        "ellipsoid": mujoco.mjtGeom.mjGEOM_ELLIPSOID,
+    }[geom_type]
+    points_local = sample_mujoco_geom_local_points(enum, size)
+    rotation = Rotation.from_euler("xyz", [0.4, -0.2, 0.7]).as_matrix()
+    translation = np.array([0.3, -0.1, 1.2])
+    points_world = points_local @ rotation.T + translation
+    recovered = (points_world - translation) @ rotation
+
+    if geom_type == "ellipsoid":
+        surface_value = ((recovered / size[:3]) ** 2).sum(axis=1)
+        np.testing.assert_allclose(surface_value, 1.0, atol=1e-12)
+    elif geom_type == "cylinder":
+        radius, half_length = size[:2]
+        radial = np.linalg.norm(recovered[:, :2], axis=1)
+        on_side = np.isclose(radial, radius)
+        on_cap = np.isclose(np.abs(recovered[:, 2]), half_length)
+        assert np.all(on_side | on_cap)
+    else:
+        radius, half_length = size[:2]
+        segment_z = np.clip(recovered[:, 2], -half_length, half_length)
+        distance_to_axis_segment = np.linalg.norm(
+            recovered - np.column_stack(
+                [np.zeros(len(recovered)), np.zeros(len(recovered)), segment_z]
+            ),
+            axis=1,
+        )
+        np.testing.assert_allclose(distance_to_axis_segment, radius, atol=1e-12)
+
 
 def test_load_robot_config_nested_source_profile(tmp_path):
     urdf_path = tmp_path / "robot.urdf"
@@ -959,7 +1311,58 @@ def test_create_stream_state_passes_hard_penetration_constraint():
         bone_direction={"enabled": True, "chains": [["Pelvis", "A", "B"]]},
         penetration_slack={"soft_tolerance": 0.002, "hard_bound": 0.04, "slack_penalty": 5e4},
         base_position_tracking_weight=0.0,
+        penetration_correction=None,
+        solver_diagnostics=False,
     )
+
+
+def test_create_stream_state_passes_penetration_correction_and_diagnostics():
+    from omniretargeting import OmniRetargeter
+    from unittest.mock import patch
+
+    correction = {
+        "base_translation_weights": [0.1, 0.1, 20.0],
+        "joint_weight": 0.01,
+    }
+    retargeter = OmniRetargeter.__new__(OmniRetargeter)
+    retargeter.robot_model = Mock(nq=7, njnt=0)
+    retargeter.robot_data = Mock()
+    retargeter.valid_source_to_robot_link_mapping = {"Pelvis": "pelvis"}
+    retargeter.robot_height = 1.0
+    retargeter.retargeting_config = {
+        "penetration_correction": correction,
+        "solver_diagnostics": True,
+    }
+    retargeter.valid_source_target_names = ["Pelvis"]
+    retargeter.base_orientation_config = {}
+
+    with patch("omniretargeting.retargeting.GenericInteractionRetargeter") as retargeter_cls:
+        retargeter_cls.return_value = Mock()
+        retargeter.create_stream_state(scaled_terrain=Mock())
+
+    assert retargeter_cls.call_args.kwargs["penetration_correction"] is correction
+    assert retargeter_cls.call_args.kwargs["solver_diagnostics"] is True
+
+
+def test_create_stream_state_enables_default_slack_parameters():
+    from omniretargeting import OmniRetargeter
+    from unittest.mock import patch
+
+    retargeter = OmniRetargeter.__new__(OmniRetargeter)
+    retargeter.robot_model = Mock(nq=7, njnt=0)
+    retargeter.robot_data = Mock()
+    retargeter.valid_source_to_robot_link_mapping = {"Pelvis": "pelvis"}
+    retargeter.robot_height = 1.0
+    retargeter.retargeting_config = {"penetration_resolver": "hard_constraint_slack"}
+    retargeter.valid_source_target_names = ["Pelvis"]
+    retargeter.base_orientation_config = {}
+
+    with patch("omniretargeting.retargeting.GenericInteractionRetargeter") as retargeter_cls:
+        retargeter_cls.return_value = Mock()
+        retargeter.create_stream_state(scaled_terrain=Mock())
+
+    assert retargeter_cls.call_args.kwargs["hard_penetration_constraint"] is True
+    assert retargeter_cls.call_args.kwargs["penetration_slack"] == {}
 
 
 def test_create_stream_state_ignores_slack_params_for_non_slack_resolver():

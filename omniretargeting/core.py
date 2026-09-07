@@ -17,7 +17,12 @@ from matplotlib.animation import FuncAnimation
 from mpl_toolkits.mplot3d import Axes3D
 
 from .data_sources.base import DataSource, MotionData, MotionFrame
-from .utils import compute_mesh_height_at_point, detect_robot_height, load_robot_urdf_with_floating_base
+from .utils import (
+    compute_mesh_height_at_point,
+    detect_robot_height,
+    load_robot_urdf_with_floating_base,
+    sample_mujoco_geom_local_points,
+)
 
 
 @dataclass
@@ -291,6 +296,11 @@ class OmniRetargeter:
                 f"Unknown penetration_resolver '{penetration_resolver}'. "
                 f"Expected one of {valid_resolvers}."
             )
+        penetration_slack = None
+        if penetration_resolver == "hard_constraint_slack":
+            penetration_slack = self.retargeting_config.get("penetration_slack")
+            if penetration_slack is None:
+                penetration_slack = {}
 
         retargeter = GenericInteractionRetargeter(
             self.robot_model,
@@ -307,13 +317,13 @@ class OmniRetargeter:
             laplacian_edge_weighting=self.retargeting_config.get("laplacian_edge_weighting", "uniform"),
             laplacian_distance_decay=float(self.retargeting_config.get("laplacian_distance_decay", 30.0)),
             bone_direction=self.retargeting_config.get("bone_direction"),
-            penetration_slack=(
-                self.retargeting_config.get("penetration_slack")
-                if penetration_resolver == "hard_constraint_slack"
-                else None
-            ),
+            penetration_slack=penetration_slack,
             base_position_tracking_weight=float(
                 self.retargeting_config.get("base_position_tracking_weight", 0.0)
+            ),
+            penetration_correction=self.retargeting_config.get("penetration_correction"),
+            solver_diagnostics=bool(
+                self.retargeting_config.get("solver_diagnostics", False)
             ),
         )
 
@@ -795,54 +805,7 @@ class OmniRetargeter:
         """Sample support candidate points for one geom in the owning body frame."""
         geom_type = int(self.robot_model.geom_type[geom_id])
         size = np.asarray(self.robot_model.geom_size[geom_id], dtype=float)
-
-        if geom_type == mujoco.mjtGeom.mjGEOM_SPHERE:
-            radius = size[0]
-            points_local = np.array([
-                [0.0, 0.0, -radius],
-                [0.0, 0.0, radius],
-                [radius, 0.0, 0.0],
-                [-radius, 0.0, 0.0],
-                [0.0, radius, 0.0],
-                [0.0, -radius, 0.0],
-            ])
-        elif geom_type == mujoco.mjtGeom.mjGEOM_BOX:
-            hx, hy, hz = size
-            corners = []
-            for sx in (-hx, hx):
-                for sy in (-hy, hy):
-                    for sz in (-hz, hz):
-                        corners.append([sx, sy, sz])
-            corners.extend([[0.0, 0.0, -hz], [0.0, 0.0, hz]])
-            points_local = np.asarray(corners, dtype=float)
-        elif geom_type in (mujoco.mjtGeom.mjGEOM_CYLINDER, mujoco.mjtGeom.mjGEOM_CAPSULE):
-            radius = size[0]
-            half_length = size[1]
-            theta = np.linspace(0.0, 2.0 * np.pi, 12, endpoint=False)
-            rings = []
-            for z in (-half_length, 0.0, half_length):
-                ring = np.column_stack([
-                    radius * np.cos(theta),
-                    radius * np.sin(theta),
-                    np.full_like(theta, z),
-                ])
-                rings.append(ring)
-            endpoints = np.array([[0.0, 0.0, -half_length], [0.0, 0.0, half_length]], dtype=float)
-            if geom_type == mujoco.mjtGeom.mjGEOM_CAPSULE:
-                endpoints = np.vstack([endpoints, [[0.0, 0.0, -half_length - radius], [0.0, 0.0, half_length + radius]]])
-            points_local = np.vstack(rings + [endpoints])
-        elif geom_type == mujoco.mjtGeom.mjGEOM_ELLIPSOID:
-            rx, ry, rz = size
-            points_local = np.array([
-                [0.0, 0.0, -rz],
-                [0.0, 0.0, rz],
-                [rx, 0.0, 0.0],
-                [-rx, 0.0, 0.0],
-                [0.0, ry, 0.0],
-                [0.0, -ry, 0.0],
-            ])
-        else:
-            points_local = np.zeros((1, 3), dtype=float)
+        points_local = sample_mujoco_geom_local_points(geom_type, size)
 
         geom_pos = np.asarray(self.robot_model.geom_pos[geom_id], dtype=float)
         geom_quat = np.asarray(self.robot_model.geom_quat[geom_id], dtype=float)
