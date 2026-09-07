@@ -474,8 +474,10 @@ solver's `step_size`. Joint weights are divided by squared joint range when
 range normalization is enabled. A matching `joint_regularization_boost.joints`
 entry takes the larger weight for that joint. The legacy
 `base_position_tracking_weight` takes precedence over X/Y translation weights
-when explicit source-root translation is available; Z keeps the independent
-correction weight and remains movable.
+when explicit source-root translation is available, and
+`base_position_tracking_weight_z` takes precedence over the Z translation
+weight in the same case; otherwise Z keeps the independent
+`penetration_correction` weight and remains movable.
 When a frame starts outside the hard bound by more than one allowed physical
 step, the SQP uses heavily penalized restoration variables to make monotone
 progress over multiple iterations. A solve is still reported successful only

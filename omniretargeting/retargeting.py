@@ -237,6 +237,7 @@ class GenericInteractionRetargeter:
         bone_direction: Optional[Dict] = None,
         penetration_slack: Optional[Dict] = None,
         base_position_tracking_weight: float = 0.0,
+        base_position_tracking_weight_z: float = 0.0,
         penetration_correction: Optional[Dict] = None,
         solver_diagnostics: bool = False,
     ):
@@ -383,6 +384,7 @@ class GenericInteractionRetargeter:
         self.penetration_hard_bound = float(ps.get("hard_bound", 0.03))
         self.penetration_slack_penalty = float(ps.get("slack_penalty", 1e5))
         self.base_position_tracking_weight = float(base_position_tracking_weight)
+        self.base_position_tracking_weight_z = float(base_position_tracking_weight_z)
         self.solver_diagnostics = bool(solver_diagnostics)
         if self.penetration_slack_enabled:
             slack_values = np.array(
@@ -1177,8 +1179,11 @@ class GenericInteractionRetargeter:
             and self.base_translation_opt_indices
         ):
             position_weights = self.base_translation_weights.copy()
-            if root_translation is not None and self.base_position_tracking_weight > 0.0:
-                position_weights[:2] = self.base_position_tracking_weight
+            if root_translation is not None:
+                if self.base_position_tracking_weight > 0.0:
+                    position_weights[:2] = self.base_position_tracking_weight
+                if self.base_position_tracking_weight_z > 0.0:
+                    position_weights[2] = self.base_position_tracking_weight_z
             for axis, opt_idx in enumerate(self.base_translation_opt_indices):
                 diff = float(
                     q[self.root_qpos_adr + axis]

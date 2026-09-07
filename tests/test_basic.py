@@ -1435,6 +1435,7 @@ def test_create_stream_state_passes_hard_penetration_constraint():
         bone_direction={"enabled": True, "chains": [["Pelvis", "A", "B"]]},
         penetration_slack={"soft_tolerance": 0.002, "hard_bound": 0.04, "slack_penalty": 5e4},
         base_position_tracking_weight=0.0,
+        base_position_tracking_weight_z=0.0,
         penetration_correction=None,
         solver_diagnostics=False,
     )

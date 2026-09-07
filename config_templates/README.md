@@ -44,6 +44,8 @@ For SMPL-X motion data with 22 body joints. Supports both raw parameters and pro
 - `motion`: Path to .npz or .npy file
 - `model_directory`: Path to SMPL-X model files
 - `gender`: "neutral", "male", or "female"
+- `use_smplx_base_pose`: Keep the SMPL-X root (pelvis) pose so the floating
+  base can be anchored to the source motion (`true` recommended)
 - `betas`: Shape parameters (10 values)
 
 **Example:**
@@ -52,6 +54,7 @@ type: smplx
 motion: /path/to/motion.npz
 model_directory: ~/Datasets/smplx
 gender: neutral
+use_smplx_base_pose: true
 betas: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 ```
 

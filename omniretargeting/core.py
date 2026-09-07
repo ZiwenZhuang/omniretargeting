@@ -321,6 +321,9 @@ class OmniRetargeter:
             base_position_tracking_weight=float(
                 self.retargeting_config.get("base_position_tracking_weight", 0.0)
             ),
+            base_position_tracking_weight_z=float(
+                self.retargeting_config.get("base_position_tracking_weight_z", 0.0)
+            ),
             penetration_correction=self.retargeting_config.get("penetration_correction"),
             solver_diagnostics=bool(
                 self.retargeting_config.get("solver_diagnostics", False)
