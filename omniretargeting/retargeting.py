@@ -854,6 +854,8 @@ class GenericInteractionRetargeter:
         current_violation = self._nonlinear_penetration_violation(q)
         converged = False
         solver_failed = False
+        backtrack_failed = False
+        accepted_any = False
         iterations = 0
         accepted_step = np.zeros(self.nv_a)
         total_backtracks = 0
@@ -898,12 +900,27 @@ class GenericInteractionRetargeter:
                         backtrack_accepted = True
                         break
                 if not backtrack_accepted:
+                    # No positive backtracking scale preserves the nonlinear
+                    # hard bound. If no usable step has been accepted yet, the
+                    # frame has not moved and must be reported as failed instead
+                    # of silently accepted. Otherwise, keep the previously
+                    # accepted feasible pose and treat the zero step as
+                    # convergence.
+                    if not accepted_any:
+                        backtrack_failed = True
+                        q_new = q
+                        accepted_step = np.zeros_like(accepted_step)
+                        candidate_violation = current_violation
+                        last_cost = cost
+                        break
                     q_new = q
                     accepted_step = np.zeros_like(accepted_step)
                     candidate_violation = current_violation
 
             q = q_new
             current_violation = candidate_violation
+            if np.linalg.norm(accepted_step) > 0.0:
+                accepted_any = True
             scaled_step_norm = float(
                 np.linalg.norm(accepted_step / self.step_limits)
             )
@@ -918,14 +935,17 @@ class GenericInteractionRetargeter:
         net_delta = self._configuration_residual(q_init, q)
         if solver_failed:
             failure_reason = "qp_solver_failed"
+        elif backtrack_failed:
+            failure_reason = "nonlinear_step_rejected"
         elif not feasible:
             failure_reason = "nonlinear_hard_bound_violation"
         else:
             failure_reason = None
         self.last_solve_diagnostics = {
-            "success": bool(feasible and not solver_failed),
+            "success": bool(feasible and not solver_failed and not backtrack_failed),
             "converged": converged,
             "solver_failed": solver_failed,
+            "backtrack_failed": backtrack_failed,
             "failure_reason": failure_reason,
             "iterations": iterations,
             "cost": float(last_cost),

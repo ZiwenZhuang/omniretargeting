@@ -768,6 +768,76 @@ def test_nonlinear_feasibility_is_checked_on_integrated_candidate():
     assert retargeter.last_solve_diagnostics["failure_reason"] is None
 
 
+def test_nonlinear_step_rejection_is_reported_when_no_step_accepted():
+    import mujoco
+    from scipy import sparse as sp
+
+    from omniretargeting.retargeting import GenericInteractionRetargeter
+
+    model = mujoco.MjModel.from_xml_string(
+        """
+        <mujoco>
+          <worldbody>
+            <body name="base" pos="0 0 0.04">
+              <freejoint/>
+              <geom name="base_geom" type="sphere" size="0.05"/>
+            </body>
+          </worldbody>
+        </mujoco>
+        """
+    )
+    data = mujoco.MjData(model)
+    terrain = trimesh.Trimesh(
+        vertices=np.array(
+            [[-2.0, -2.0, 0.0], [2.0, -2.0, 0.0], [2.0, 2.0, 0.0], [-2.0, 2.0, 0.0]]
+        ),
+        faces=np.array([[0, 1, 2], [0, 2, 3]]),
+        process=False,
+    )
+    retargeter = GenericInteractionRetargeter(
+        model,
+        data,
+        terrain,
+        {"Base": "base"},
+        0.1,
+        source_target_names=["Base"],
+        terrain_sample_points=4,
+        hard_penetration_constraint=True,
+        solver_diagnostics=True,
+    )
+
+    q_start = model.qpos0.copy()
+    delta_v = np.zeros(retargeter.nv_a)
+    delta_v[retargeter.base_translation_opt_indices[2]] = -0.02
+    q_worse = retargeter._integrate_optimized_step(q_start, delta_v)
+
+    # The QP "succeeds" but produces a candidate that is worse than the
+    # current feasible pose, and every positive backtracking scale is also
+    # worse. The solver must keep the feasible pose and report the failure
+    # instead of silently marking the frame converged/successful.
+    retargeter._single_optimization_step = Mock(return_value=(q_worse, 1.0))
+    retargeter._nonlinear_penetration_violation = Mock(
+        side_effect=[0.0] + [0.5] * 7
+    )
+
+    result = retargeter._optimize_configuration(
+        q_start,
+        np.zeros((1, 3)),
+        sp.csr_matrix((1, 1)),
+        sp.csr_matrix((3, 3)),
+        np.zeros((0, 3)),
+        max_iter=1,
+    )
+
+    np.testing.assert_allclose(result, q_start)
+    diagnostics = retargeter.last_solve_diagnostics
+    assert diagnostics["success"] is False
+    assert diagnostics["solver_failed"] is False
+    assert diagnostics["backtrack_failed"] is True
+    assert diagnostics["failure_reason"] == "nonlinear_step_rejected"
+    assert diagnostics["converged"] is False
+
+
 @pytest.mark.parametrize(
     ("geom_type", "size"),
     [
