@@ -1438,6 +1438,7 @@ def test_create_stream_state_passes_hard_penetration_constraint():
         base_position_tracking_weight_z=0.0,
         penetration_correction=None,
         solver_diagnostics=False,
+        terrain_deep_penetration_depth=0.5,
     )
 
 

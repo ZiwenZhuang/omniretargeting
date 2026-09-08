@@ -341,6 +341,9 @@ class OmniRetargeter:
             solver_diagnostics=bool(
                 self.retargeting_config.get("solver_diagnostics", False)
             ),
+            terrain_deep_penetration_depth=float(
+                self.retargeting_config.get("terrain_deep_penetration_depth", 0.5)
+            ),
         )
 
         q_init = np.zeros(self.robot_model.nq)

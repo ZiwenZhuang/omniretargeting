@@ -8,6 +8,7 @@ import clarabel
 from scipy import sparse as sp
 from scipy.spatial import Delaunay
 import trimesh
+from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 from pathlib import Path
 import fnmatch
@@ -240,6 +241,7 @@ class GenericInteractionRetargeter:
         base_position_tracking_weight_z: float = 0.0,
         penetration_correction: Optional[Dict] = None,
         solver_diagnostics: bool = False,
+        terrain_deep_penetration_depth: float = 0.5,
     ):
         """Initialize the generic retargeter.
 
@@ -487,6 +489,25 @@ class GenericInteractionRetargeter:
         self.collision_detection_threshold = collision_detection_threshold
         self.terrain_sample_points = int(terrain_sample_points)
 
+        # Voxel grid used to accelerate terrain proximity queries. Cell size
+        # and the per-query neighborhood radius (in cells) are chosen so that
+        # any triangle within `collision_detection_threshold` of a query point
+        # is guaranteed to be included. A second, larger "deep" radius covers
+        # `terrain_deep_penetration_depth` so that deeply buried points (e.g.
+        # an initially buried geom) still keep their signed-penetration
+        # constraints. Points farther than the deep radius from any triangle
+        # are treated as above/away from the surface and skipped.
+        self._terrain_voxel_size = 0.25
+        self._terrain_voxel_radius = int(
+            np.ceil(self.collision_detection_threshold / self._terrain_voxel_size)
+        ) + 1
+        self._terrain_deep_penetration_depth = float(
+            max(terrain_deep_penetration_depth, self.collision_detection_threshold)
+        )
+        self._terrain_voxel_deep_radius = int(
+            np.ceil(self._terrain_deep_penetration_depth / self._terrain_voxel_size)
+        ) + 1
+
         # Apply cylinder → capsule replacement if requested
         if replace_cylinders_with_capsules:
             self._replace_cylinders_with_capsules()
@@ -691,6 +712,94 @@ class GenericInteractionRetargeter:
         """Setup terrain interaction parameters."""
         # Sample points on terrain for interaction mesh
         self.terrain_points = sample_points_on_mesh(self.terrain_mesh, self.terrain_sample_points)
+        self._build_terrain_voxel_grid()
+
+    def _build_terrain_voxel_grid(self):
+        """Bucket terrain triangles into a uniform voxel grid.
+
+        Used by :meth:`_closest_points_on_terrain` to answer ``trimesh``
+        closest-point queries against only the triangles that can possibly be
+        within ``collision_detection_threshold`` of a query point, instead of
+        the full (potentially tens-of-thousands of faces) mesh on every SQP
+        iteration. This is a *provably safe* prefilter (unlike the removed
+        unsigned center-distance heuristic): every triangle whose bounding box
+        overlaps a voxel is registered in it, and queries gather a
+        ``threshold``-sized neighborhood of voxels, so a triangle within
+        ``threshold`` of a query point is always included and the closest point
+        is still computed exactly.
+        """
+        tris = self.terrain_mesh.vertices[self.terrain_mesh.faces]
+        lo = self.terrain_mesh.bounds[0].copy()
+        cs = self._terrain_voxel_size
+        grid: Dict[Tuple[int, int, int], List[int]] = defaultdict(list)
+        for fi in range(len(tris)):
+            tmin = tris[fi].min(axis=0)
+            tmax = tris[fi].max(axis=0)
+            imin = np.floor((tmin - lo) / cs).astype(int)
+            imax = np.floor((tmax - lo) / cs).astype(int)
+            for i in range(imin[0], imax[0] + 1):
+                for j in range(imin[1], imax[1] + 1):
+                    for k in range(imin[2], imax[2] + 1):
+                        grid[(i, j, k)].append(fi)
+        self._terrain_triangles = tris
+        self._terrain_bounds_min = lo
+        self._terrain_voxel_triangles = dict(grid)
+
+    def _gather_voxel_triangles(self, cell: np.ndarray, radius: int) -> set[int]:
+        """Collect triangle indices from voxels within *radius* of *cell*."""
+        grid = self._terrain_voxel_triangles
+        cand: set[int] = set()
+        for i in range(cell[0] - radius, cell[0] + radius + 1):
+            for j in range(cell[1] - radius, cell[1] + radius + 1):
+                for k in range(cell[2] - radius, cell[2] + radius + 1):
+                    v = grid.get((i, j, k))
+                    if v is not None:
+                        cand.update(v)
+        return cand
+
+    def _closest_points_on_terrain(
+        self,
+        points: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Exact closest terrain points for ``points`` via the voxel grid.
+
+        Returns ``(closest_pts, dists, tri_ids)`` mirroring
+        ``trimesh.proximity.closest_point``. The search is two-level: a fine
+        radius that provably covers ``collision_detection_threshold``, then a
+        larger "deep" radius covering ``terrain_deep_penetration_depth`` so
+        deeply buried points keep their signed-penetration constraints. Points
+        with no terrain triangle even within the deep radius return
+        ``dists[i] = inf`` with ``tri_ids[i] = -1``.
+        """
+        lo = self._terrain_bounds_min
+        cs = self._terrain_voxel_size
+        r_fine = self._terrain_voxel_radius
+        r_deep = self._terrain_voxel_deep_radius
+        tris = self._terrain_triangles
+
+        closest = np.array(points, dtype=float)
+        dists = np.full(len(points), np.inf, dtype=float)
+        tri_ids = np.full(len(points), -1, dtype=int)
+
+        for n, p in enumerate(points):
+            c = np.floor((p - lo) / cs).astype(int)
+            cand = self._gather_voxel_triangles(c, r_fine)
+            if not cand:
+                cand = self._gather_voxel_triangles(c, r_deep)
+            if not cand:
+                continue
+            idx = np.asarray(sorted(cand), dtype=int)
+            sub = tris[idx]
+            cp = trimesh.triangles.closest_point(
+                sub, np.tile(p, (len(idx), 1))
+            )
+            d2 = ((cp - p) ** 2).sum(axis=1)
+            m = int(d2.argmin())
+            closest[n] = cp[m]
+            dists[n] = float(np.sqrt(d2[m]))
+            tri_ids[n] = idx[m]
+
+        return closest, dists, tri_ids
 
     def create_interaction_mesh(
         self,
@@ -1748,8 +1857,6 @@ class GenericInteractionRetargeter:
         Returns:
             (hard_rows, slack_rows): numeric rows; see _penetration_constraint_terms.
         """
-        import trimesh as _trimesh
-
         hard_rows: List[Tuple[np.ndarray, float]] = []
         slack_rows: List[Tuple[np.ndarray, float, float]] = []
         m, d = self.robot_model, self.robot_data
@@ -1792,9 +1899,10 @@ class GenericInteractionRetargeter:
 
         all_points = np.array(all_points)  # (N, 3)
 
-        # Query terrain mesh for closest points to each sampled point
-        closest_pts, unsigned_dists, tri_ids = _trimesh.proximity.closest_point(
-            self.terrain_mesh, all_points
+        # Query terrain mesh for closest points to each sampled point via the
+        # voxel-bucketed local search (exact result, only near triangles).
+        closest_pts, unsigned_dists, tri_ids = self._closest_points_on_terrain(
+            all_points
         )
 
         for k, gi in enumerate(all_geom_info):
@@ -1805,6 +1913,11 @@ class GenericInteractionRetargeter:
             # normal, not forced to +Z.
             query_pt = all_points[k]
             surface_pt = closest_pts[k]
+
+            if tri_ids[k] < 0:
+                # No terrain triangle within the neighborhood: provably farther
+                # than the collision threshold, so no constraint is possible.
+                continue
 
             # Face normal from terrain mesh
             raw_face_normal = self.terrain_mesh.face_normals[tri_ids[k]]
