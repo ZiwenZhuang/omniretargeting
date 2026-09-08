@@ -136,6 +136,8 @@ def main():
     parser.add_argument("--framerate", type=float, default=None, help="Framerate of the motion (optional, defaults to 30.0 or auto-detected)")
     parser.add_argument("--output-framerate", dest="output_framerate", type=float, default=None,
                         help="Resample motion to this framerate before retargeting (e.g. 30 to downsample 120fps data)")
+    parser.add_argument("--progress", action="store_true",
+                        help="Show a progress bar while retargeting frames")
 
     args = parser.parse_args()
 
@@ -272,6 +274,7 @@ def main():
             framerate=framerate,
             visualize_trajectory=args.vis,
             enable_scene_scaling=args.enable_scene_scaling,
+            show_progress=args.progress,
         )
         if args.scale_factor is not None:
             source_to_robot_scale = args.scale_factor

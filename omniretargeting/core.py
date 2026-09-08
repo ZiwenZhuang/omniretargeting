@@ -178,6 +178,7 @@ class OmniRetargeter:
         visualize_trajectory: bool = True,
         enable_terrain_scaling: bool | None = None,
         enable_scene_scaling: bool | None = None,
+        show_progress: bool = False,
     ) -> Tuple[float, np.ndarray]:
         """
         Retarget a complete source motion and return ``(source_to_robot_scale, robot_motion)``.
@@ -249,7 +250,7 @@ class OmniRetargeter:
             self._visualize_trajectory(scaled_motion_data.positions, scaled_terrain)
 
         retargeted_motion = np.array(
-            list(self.retarget_stream(scaled_motion_data, scaled_terrain=scaled_terrain))
+            list(self.retarget_stream(scaled_motion_data, scaled_terrain=scaled_terrain, show_progress=show_progress))
         )
 
         retargeting_config = getattr(self, "retargeting_config", {})
@@ -269,8 +270,20 @@ class OmniRetargeter:
         self,
         source: DataSource | MotionData | Iterable[MotionFrame] | np.ndarray,
         scaled_terrain: trimesh.Trimesh | None = None,
+        show_progress: bool = False,
     ) -> Iterator[np.ndarray]:
         frames = self._iter_motion_frames(source)
+        if show_progress:
+            from tqdm import tqdm
+
+            total = None
+            positions = getattr(source, "positions", None)
+            if positions is not None:
+                try:
+                    total = len(positions)
+                except TypeError:
+                    total = None
+            frames = tqdm(frames, total=total, desc="Retargeting")
         state = self.create_stream_state(scaled_terrain=scaled_terrain)
         for frame in frames:
             yield self.retarget_frame(frame, state)

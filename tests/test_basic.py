@@ -1262,7 +1262,7 @@ def test_retarget_motion_uses_base_inputs_as_root_pose_arrays():
     retargeter.terrain_mesh.copy.return_value = scaled_terrain
     retargeter.retargeting_config = {"penetration_resolver": "hard_constraint"}
 
-    def fake_retarget_stream(motion, scaled_terrain=None):
+    def fake_retarget_stream(motion, scaled_terrain=None, show_progress=False):
         captured["motion"] = motion
         captured["terrain"] = scaled_terrain
         return [np.zeros(7, dtype=float)]

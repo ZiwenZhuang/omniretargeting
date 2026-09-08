@@ -64,6 +64,8 @@ def main() -> None:
                         help="Skip motions whose retargeted output already exists")
     parser.add_argument("--no-video", action="store_true",
                         help="Skip video rendering (useful for headless servers)")
+    parser.add_argument("--progress", action="store_true",
+                        help="Show a progress bar for each motion's frame retargeting")
     parser.add_argument("--output-framerate", type=float, default=None,
                         help="Resample motion to this framerate before retargeting (e.g. 30 to downsample 120fps data)")
     parser.add_argument("--scale-factor", type=float, default=None,
@@ -160,6 +162,7 @@ def main() -> None:
         save_video=not args.no_video,
         output_framerate=args.output_framerate,
         scale_factor=args.scale_factor,
+        progress=args.progress,
     )
 
     failed = _summarize(results)

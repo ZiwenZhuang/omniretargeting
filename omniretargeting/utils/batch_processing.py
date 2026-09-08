@@ -324,6 +324,7 @@ def _build_command(
     output_framerate: float | None = None,
     save_video: bool = True,
     scale_factor: float | None = None,
+    progress: bool = False,
 ) -> list[str]:
     """Build the main.py argument list for one motion file."""
     motion_dir = output_dir / "motions"
@@ -345,6 +346,8 @@ def _build_command(
         cmd.extend(["--framerate", str(framerate)])
     if output_framerate is not None:
         cmd.extend(["--output-framerate", str(output_framerate)])
+    if progress:
+        cmd.append("--progress")
     return cmd
 
 
@@ -469,6 +472,7 @@ def _run_test_job(
     download_fn: DownloadFn | None = None,
     delete_after: bool = False,
     scale_factor: float | None = None,
+    progress: bool = False,
 ) -> dict:
     """Run the first motion as a probe job.  Returns timing info for batch-size tuning."""
     first = motion_files[0]
@@ -499,6 +503,7 @@ def _run_test_job(
         output_framerate,
         save_video=save_video,
         scale_factor=scale_factor,
+        progress=progress,
     )
     log_file = output_dir / "logs" / (f"{rel_subdir}/{first.stem}.log" if rel_subdir else f"{first.stem}.log")
 
@@ -565,6 +570,7 @@ def _run_one_motion(
     download_fn: DownloadFn | None = None,
     delete_after: bool = False,
     scale_factor: float | None = None,
+    progress: bool = False,
 ) -> dict:
     """Process a single motion file (called from worker processes)."""
     if download_key is not None:
@@ -593,6 +599,7 @@ def _run_one_motion(
         output_framerate,
         save_video=save_video,
         scale_factor=scale_factor,
+        progress=progress,
     )
     log_file = output_dir / "logs" / (f"{rel_subdir}/{motion_stem}.log" if rel_subdir else f"{motion_stem}.log")
     result = run_single_job(cmd, activation_prefix, log_file, timeout)
@@ -627,6 +634,7 @@ def process_batch(
     worker_initializer: Callable[..., None] | None = None,
     worker_initargs: tuple = (),
     scale_factor: float | None = None,
+    progress: bool = False,
 ) -> list[dict]:
     """Process every motion file, returning per-file results.
 
@@ -677,6 +685,7 @@ def process_batch(
             download_fn=download_fn,
             delete_after=delete_downloads,
             scale_factor=scale_factor,
+            progress=progress,
         )
         results.append(test_result)
         if on_result is not None:
@@ -719,6 +728,7 @@ def process_batch(
                 download_fn=download_fn,
                 delete_after=delete_downloads,
                 scale_factor=scale_factor,
+                progress=progress,
             )
             results.append(result)
             if on_result is not None:
@@ -747,6 +757,7 @@ def process_batch(
                     download_fn=download_fn,
                     delete_after=delete_downloads,
                     scale_factor=scale_factor,
+                    progress=progress,
                 )
                 future_to_motion[future] = motion_file
 
