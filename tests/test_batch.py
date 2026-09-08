@@ -52,6 +52,7 @@ def test_build_command_places_video_beside_retargeted_motion(tmp_path):
         "robot.json",
         tmp_path,
         "stem",
+        save_video=True,
     )
 
     video_path = Path(cmd[cmd.index("--save-video") + 1])
